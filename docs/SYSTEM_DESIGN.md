@@ -38,13 +38,13 @@ and whether it is working, waiting, stuck or broken.
 | **Session** | One conversation with an agent: a Claude transcript, a Codex rollout, a Cursor composer. **The unit of display**: one ball on the playfield is one session. Subagent sessions attach to their parent. |
 | **Turn** | One user request and everything the agent does to answer it, until the agent hands control back. A turn contains one or more model calls. |
 | **Context** | Tokens currently in the model's window over the model's limit, from the last model call: `used / limit`. It rises with each call and drops after compaction. |
-| **Fichas** | Raw cumulative tokens across every model call in the session (input, output and cache traffic). Named after the tokens you buy to play pinball. No price is attached. |
+| **Coins** | Raw cumulative tokens across every model call in the session (input, output and cache traffic). Named after the coins a pinball machine takes. No price is attached. |
 
-**Why more context means more fichas.** A model call resends the whole
+**Why more context means more coins.** A model call resends the whole
 context. A session whose context sits at 150k tokens spends roughly 150k
-fichas on every call, however short the new message is. Context grows by about
-the same amount each turn, so per-call fichas grow linearly and cumulative
-fichas grow roughly quadratically with the number of turns. Compaction resets
+coins on every call, however short the new message is. Context grows by about
+the same amount each turn, so per-call coins grow linearly and cumulative
+coins grow roughly quadratically with the number of turns. Compaction resets
 the slope, which is why the panel marks compaction events. (Cache reads are
 cheaper for the provider, but they are still tokens moved; the panel counts
 them and shows the breakdown in the detail view.)
@@ -144,7 +144,7 @@ flowchart LR
 
 **`pinball-store`** (new in M4). The `Board`: live sessions keyed by
 `SessionId`, plus a fixed-size ring buffer per session of recent
-(time, context used, fichas) samples for sparklines. Applies `SessionDelta`s,
+(time, context used, coins) samples for sparklines. Applies `SessionDelta`s,
 recomputes status, and publishes changes on a `tokio::sync::broadcast`
 channel. A SQLite history with a single writer task comes later (M6,
 [ADR 0005](adr/0005-in-memory-state-first-sqlite-history-later.md)).
@@ -185,7 +185,7 @@ write to `<sessionId>/subagents/agent-<id>.jsonl` with a sibling
 `output_tokens`; the model is `message.model`. One API response is split across
 several records (one per content block) that repeat the same `message.id` and
 the same usage, so the collector **dedupes by `message.id`** before summing
-fichas.
+coins.
 
 **Context.** `input_tokens + cache_creation_input_tokens +
 cache_read_input_tokens` of the last main-chain (non-sidechain) usage, the same
@@ -215,7 +215,7 @@ JSON object per line: `{ timestamp, type, payload }`.
 | `compacted` | compaction marker |
 
 **Context** = `last_token_usage.total_tokens` over `model_context_window`.
-**Fichas** = `total_token_usage`, normalized (`input_tokens` minus
+**Coins** = `total_token_usage`, normalized (`input_tokens` minus
 `cached_input_tokens`, which becomes `cache_read`). Source of the shapes:
 [protocol.rs](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs).
 
@@ -241,7 +241,7 @@ a SQLite database that can be several GB and runs in WAL mode.
   `immutable=1`**: it makes SQLite ignore the WAL, so recent writes are
   invisible and the panel shows stale data.
 - Per-message `tokenCount` in bubbles is `0` in local storage, so **Cursor
-  fichas are unavailable**; the UI shows "—", never 0.
+  coins are unavailable**; the UI shows "—", never 0.
 
 **Activity and errors.** `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`;
 `turn_ended { status }` marks turn boundaries and failed turns.
@@ -256,7 +256,7 @@ it is answered, `cursor-agent` processes are discovered but show no session.
 | Live process link | pid file | cwd match | cwd match |
 | Context used | yes | yes | yes |
 | Context limit | inferred (200k / 1M) | reported | reported |
-| Fichas | yes (deduped) | yes | **no** ("—") |
+| Coins | yes (deduped) | yes | **no** ("—") |
 | Cache breakdown | read + write | read (+ write when present) | no |
 | Turn running | `status: busy` + open turn | `task_started` without `task_complete` | composer `status`, `turn_ended` |
 | Compaction | `compact_boundary` | `compacted` | not observed |
@@ -352,7 +352,7 @@ All routes are `GET`, behind the `Host` allowlist.
 
 On the wire a session is camelCase JSON: `id`, `kind`, `project`, `title`,
 `model`, `status`, `context { used, limit | null }`,
-`fichas { input, output, cacheRead, cacheWrite } | null`, `turns`,
+`coins { input, output, cacheRead, cacheWrite } | null`, `turns`,
 `compactions`, `subagents [{ id, status }]`, `pid | null`, `startedAt`,
 `lastActivityAt` (epoch ms) and `history` (context samples). Rust types stay
 snake_case and serialize with `#[serde(rename_all = "camelCase")]`. The shapes
@@ -462,5 +462,5 @@ Candidate crates (checked by `cargo deny` before adding):
 | **M2** Claude collector | `pinball-collectors` with `discover` and `claude` | fixtures parse; live sessions listed by a CLI subcommand |
 | **M3** Codex collector | `codex` module, normalized usage | fixtures parse; app-server hosts map to many sessions |
 | **M4** web and playfield | axum, `pinball-store` Board, routes of §8, the UI from [COMPONENTS.md](design/COMPONENTS.md) | SSE contract and adversarial tests pass |
-| **M5** Cursor collector | read-only `state.vscdb`, transcripts | WAL test passes; fichas show "—" |
+| **M5** Cursor collector | read-only `state.vscdb`, transcripts | WAL test passes; coins show "—" |
 | **M6** history | SQLite single-writer history in `pinball-store` | sparklines survive a restart |

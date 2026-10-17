@@ -34,5 +34,5 @@ tell "idle" from "ended", but process command lines can hold secrets
 - Codex and Cursor correlation is heuristic: two sessions in the same
   directory may be attributed to the wrong host process. Status still comes
   from the session's own records, so the error is limited to liveness.
-- Cursor fichas are shown as unavailable until a local source exists.
+- Cursor coins are shown as unavailable until a local source exists.
 - In Docker there is no process table; the collectors run on files alone.
