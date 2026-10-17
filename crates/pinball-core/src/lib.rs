@@ -1,4 +1,4 @@
-//! Domain types shared by every agent-troops crate.
+//! Domain types shared by every agent-pinball crate.
 
 use std::fmt;
 use std::str::FromStr;

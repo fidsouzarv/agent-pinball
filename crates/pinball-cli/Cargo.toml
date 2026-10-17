@@ -1,6 +1,6 @@
 [package]
-name = "troops-cli"
-description = "The agent-troops binary: parses arguments, loads config once, calls the library crates."
+name = "pinball-cli"
+description = "The agent-pinball binary: parses arguments, loads config once, calls the library crates."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,15 +8,15 @@ license.workspace = true
 publish.workspace = true
 
 [lib]
-name = "troops_cli"
+name = "pinball_cli"
 path = "src/lib.rs"
 
 [[bin]]
-name = "agent-troops"
+name = "agent-pinball"
 path = "src/main.rs"
 
 [dependencies]
-troops-web = { workspace = true }
+pinball-web = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,10 +1,10 @@
-# Padrões de engenharia do agent-troops
+# Padrões de engenharia do agent-pinball
 
 Referência: [akitaonrails/ai-memory](https://github.com/akitaonrails/ai-memory) (v3.1.1, Rust 1.95, edition 2024).
-Este documento registra os padrões que o ai-memory usa e define quais o agent-troops adota.
-Cada seção tem duas partes: **No ai-memory**, que descreve o que existe lá e onde, e **No agent-troops**, que diz o que vamos seguir.
+Este documento registra os padrões que o ai-memory usa e define quais o agent-pinball adota.
+Cada seção tem duas partes: **No ai-memory**, que descreve o que existe lá e onde, e **No agent-pinball**, que diz o que vamos seguir.
 
-Contexto do agent-troops: painel com tema Star Wars para monitorar agentes Codex, Cursor e Claude, escrito em Rust.
+Contexto do agent-pinball: painel com tema de pinball para monitorar agentes Codex, Cursor e Claude, escrito em Rust.
 
 ---
 
@@ -23,17 +23,17 @@ Contexto do agent-troops: painel com tema Star Wars para monitorar agentes Codex
   - `dev.build-override`: `opt-level = 3`. Proc-macros e build scripts ficam mais rápidos.
 - O core é só Rust: o servidor e a UI web compilam apenas com Cargo, sem Node nem bundler. A UI é renderizada no servidor com templates askama, e uma página pode ter um script vanilla pequeno. Qualquer coisa que precise de toolchain JS vai para `companions/`.
 
-### No agent-troops
-Adotamos tudo isso. O bootstrap criou `troops-core`, `troops-web` e `troops-cli`. Os demais crates entram quando tiverem código real, sem crates vazios. Layout alvo:
+### No agent-pinball
+Adotamos tudo isso. O bootstrap criou `pinball-core`, `pinball-web` e `pinball-cli`. Os demais crates entram quando tiverem código real, sem crates vazios. Layout alvo:
 
 ```
 crates/
-  troops-core/       # tipos de domínio: Agent, AgentKind {Codex, Cursor, Claude}, Session, Status
-  troops-collectors/ # leitura dos logs/estado de cada agente (um módulo por provider)
-  troops-store/      # persistência (SQLite, single-writer)
-  troops-web/        # painel (server-rendered, tema Star Wars)
-  troops-cli/        # binário fino
-  troops-test-support/
+  pinball-core/       # tipos de domínio: Agent, AgentKind {Codex, Cursor, Claude}, Session, Status
+  pinball-collectors/ # leitura dos logs/estado de cada agente (um módulo por provider)
+  pinball-store/      # persistência (SQLite, single-writer)
+  pinball-web/        # painel (server-rendered, tema de pinball)
+  pinball-cli/        # binário fino
+  pinball-test-support/
 ```
 
 ```toml
@@ -81,7 +81,7 @@ all = { level = "warn", priority = -1 }
 - Fronteiras tipadas: IDs, paths e kinds são parseados e normalizados uma vez e depois reusados (newtypes).
 - Sem singletons globais nem `lazy_static` de config. As dependências são passadas explicitamente.
 
-### No agent-troops
+### No agent-pinball
 Adotamos os lints do workspace como estão e acrescentamos lints que o ai-memory só aplica por convenção:
 
 ```toml
@@ -99,7 +99,7 @@ todo = "warn"
 
 Nos módulos de teste, `#![allow(clippy::unwrap_used, clippy::expect_used)]`.
 
-Usamos `disallowed-methods` para regras de arquitetura. Exemplo: o crate `troops-web` não pode chamar métodos de escrita do store nem disparar ações nos agentes. O painel é só leitura.
+Usamos `disallowed-methods` para regras de arquitetura. Exemplo: o crate `pinball-web` não pode chamar métodos de escrita do store nem disparar ações nos agentes. O painel é só leitura.
 
 ---
 
@@ -143,11 +143,11 @@ tf = "nextest run --workspace -P full"      # gate: roda tudo
 
 **CI:** Linux em todo PR; macOS com label `full-ci` ou dispatch, obrigatório antes de release; Windows nightly ou com label; cross-build Windows (`cargo xwin`) em todo PR; build `--release` separado, porque falhas que só aparecem com LTO existem.
 
-### No agent-troops
+### No agent-pinball
 Adotamos nextest + aliases `t`/`tf` + tiers por nome + `retries = 0` + um binário por crate + pre-push hook.
 
 Específico do domínio:
-- Cada collector (Codex, Cursor, Claude) é testado contra **fixtures reais anonimizadas** dos arquivos e logs de cada ferramenta, em `crates/troops-collectors/fixtures/<provider>/`, com link para a doc ou a origem do formato.
+- Cada collector (Codex, Cursor, Claude) é testado contra **fixtures reais anonimizadas** dos arquivos e logs de cada ferramenta, em `crates/pinball-collectors/fixtures/<provider>/`, com link para a doc ou a origem do formato.
 - Parsers de log recebem entrada malformada ou truncada em teste. Nunca podem dar panic.
 - O cálculo de status (rodando, parado, travado, erro) é testado de forma table-driven com `rstest`.
 - Clock e filesystem são injetados (trait), sem `SystemTime::now()` direto na lógica.
@@ -165,7 +165,7 @@ Específico do domínio:
 - A complexidade é controlada por convenção e revisão: CLI fino, um crate por responsabilidade, fronteiras tipadas, mudanças pequenas e sem abstração especulativa.
 - Não há medição de cobertura (tarpaulin ou llvm-cov) nem mutation testing.
 
-### No agent-troops
+### No agent-pinball
 Aqui vamos além do ai-memory e deixamos os limites explícitos, aplicados pelo clippy:
 
 ```toml
@@ -189,7 +189,7 @@ Com `-D warnings` no CI, estourar qualquer um desses limites quebra o build.
 
 Regras:
 - `#[allow(...)]` para complexidade só com comentário dizendo *por que* e com escopo na função, nunca no módulo. Mais de 5 argumentos indica que falta uma struct de parâmetros ou um builder.
-- Cobertura: `cargo llvm-cov nextest` no CI como relatório (sem gate no início). O gate de 70% em `troops-core` e `troops-collectors` entra depois que o código estabilizar.
+- Cobertura: `cargo llvm-cov nextest` no CI como relatório (sem gate no início). O gate de 70% em `pinball-core` e `pinball-collectors` entra depois que o código estabilizar.
 - Opcional quando o core estabilizar: `cargo mutants` nos parsers dos collectors.
 
 ---
@@ -232,7 +232,7 @@ Regras:
 
 **Processo:** `SECURITY.md` com canal privado (GitHub Security Advisory), SLA de resposta (7 dias) e de patch (30 dias), e threat model explícito com o que está e o que não está no escopo.
 
-### No agent-troops
+### No agent-pinball
 Adotamos tudo isso. Pontos específicos de um monitor de agentes:
 - **Os logs dos agentes contêm segredos e código do usuário.** Todo texto lido de Codex, Cursor ou Claude passa por um `Sanitized<T>` antes de ser guardado ou renderizado. Nada cru chega ao painel.
 - O painel é **read-only** em relação aos agentes: não envia comando nem mata processo, a menos que isso seja decidido explicitamente depois, com auth e confirmação. A regra é aplicada com `disallowed-methods` no crate web.
@@ -269,7 +269,7 @@ Adotamos tudo isso. Pontos específicos de um monitor de agentes:
 
 **CI:** o job `docker-smoke` monta a imagem a partir do binário de release e verifica `--version`, a presença dos arquivos empacotados e os subcomandos no `--help`.
 
-### No agent-troops
+### No agent-pinball
 Adotamos o mesmo modelo, com um ponto extra:
 
 - Bind padrão `127.0.0.1:<porta>`, allowlist de `Host`, fail-closed fora do loopback sem token.
@@ -281,20 +281,20 @@ Adotamos o mesmo modelo, com um ponto extra:
 ```yaml
 # docker/docker-compose.yml (esboço)
 services:
-  agent-troops:
+  agent-pinball:
     build: { context: .., dockerfile: docker/Dockerfile }
     user: "1000:1000"
     restart: unless-stopped
     ports:
       - "127.0.0.1:4242:4242"
     volumes:
-      - troops-data:/data
+      - pinball-data:/data
       - ${HOME}/.codex:/agents/codex:ro
       - ${HOME}/.cursor:/agents/cursor:ro
       - ${HOME}/.claude:/agents/claude:ro
     env_file: [{ path: .env, required: false }]
 volumes:
-  troops-data:
+  pinball-data:
 ```
 
 ---
@@ -320,7 +320,7 @@ cargo audit
 | `rust-toolchain.toml` | igual ao do ai-memory |
 | `Cargo.toml` (workspace, lints, profiles) | ai-memory + lints extras da seção 2 e da 4 |
 | `clippy.toml` | novo (limites de complexidade) |
-| `crates/troops-web/clippy.toml` | padrão `disallowed-methods` do ai-memory |
+| `crates/pinball-web/clippy.toml` | padrão `disallowed-methods` do ai-memory |
 | `.cargo/config.toml` | aliases `t` / `tf` |
 | `.config/nextest.toml` | profiles `default` / `full` / `ci` |
 | `deny.toml` | igual ao do ai-memory |

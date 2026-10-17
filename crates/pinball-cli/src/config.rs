@@ -24,14 +24,14 @@ pub struct Config {
 /// Invalid setting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
-    /// `AGENT_TROOPS_BIND` is not a socket address.
+    /// `AGENT_PINBALL_BIND` is not a socket address.
     InvalidBind(String),
 }
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidBind(value) => write!(f, "invalid AGENT_TROOPS_BIND: {value:?}"),
+            Self::InvalidBind(value) => write!(f, "invalid AGENT_PINBALL_BIND: {value:?}"),
         }
     }
 }
@@ -42,11 +42,11 @@ impl Config {
     /// Builds the config from an environment lookup. Injectable, so tests never
     /// touch the process environment.
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
-        let bind_raw = lookup("AGENT_TROOPS_BIND").unwrap_or_else(|| DEFAULT_BIND.to_owned());
+        let bind_raw = lookup("AGENT_PINBALL_BIND").unwrap_or_else(|| DEFAULT_BIND.to_owned());
         let bind = bind_raw
             .parse()
             .map_err(|_| ConfigError::InvalidBind(bind_raw.clone()))?;
-        let allowed_hosts = lookup("AGENT_TROOPS_ALLOWED_HOSTS").map_or_else(
+        let allowed_hosts = lookup("AGENT_PINBALL_ALLOWED_HOSTS").map_or_else(
             || DEFAULT_ALLOWED_HOSTS.map(str::to_owned).to_vec(),
             |raw| {
                 raw.split(',')
@@ -56,7 +56,7 @@ impl Config {
                     .collect()
             },
         );
-        let in_container = lookup("AGENT_TROOPS_IN_CONTAINER")
+        let in_container = lookup("AGENT_PINBALL_IN_CONTAINER")
             .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
         Ok(Self {
             bind,
@@ -95,12 +95,12 @@ mod tests {
     #[test]
     fn environment_overrides() {
         let config = Config::from_lookup(lookup(&[
-            ("AGENT_TROOPS_BIND", "0.0.0.0:4242"),
+            ("AGENT_PINBALL_BIND", "0.0.0.0:4242"),
             (
-                "AGENT_TROOPS_ALLOWED_HOSTS",
+                "AGENT_PINBALL_ALLOWED_HOSTS",
                 " localhost , host.docker.internal ,,",
             ),
-            ("AGENT_TROOPS_IN_CONTAINER", "1"),
+            ("AGENT_PINBALL_IN_CONTAINER", "1"),
         ]))
         .unwrap();
         assert_eq!(config.bind, "0.0.0.0:4242".parse().unwrap());
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn invalid_bind_is_an_error() {
-        let err = Config::from_lookup(lookup(&[("AGENT_TROOPS_BIND", "nope")])).unwrap_err();
+        let err = Config::from_lookup(lookup(&[("AGENT_PINBALL_BIND", "nope")])).unwrap_err();
         assert_eq!(err, ConfigError::InvalidBind("nope".to_owned()));
     }
 
@@ -118,7 +118,7 @@ mod tests {
     fn in_container_needs_an_explicit_true() {
         for value in ["0", "", "yes"] {
             let config =
-                Config::from_lookup(lookup(&[("AGENT_TROOPS_IN_CONTAINER", value)])).unwrap();
+                Config::from_lookup(lookup(&[("AGENT_PINBALL_IN_CONTAINER", value)])).unwrap();
             assert!(!config.in_container, "{value:?}");
         }
     }

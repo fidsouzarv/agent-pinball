@@ -1,6 +1,6 @@
 [package]
-name = "troops-web"
-description = "HTTP surface of the agent-troops panel. Read-only by design."
+name = "pinball-web"
+description = "HTTP surface of the agent-pinball panel. Read-only by design."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

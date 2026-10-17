@@ -18,11 +18,11 @@ if git config --get core.hooksPath >/dev/null; then
 fi
 
 hook=$(git rev-parse --git-path hooks/pre-push)
-begin="# >>> agent-troops pre-push >>>"
-end="# <<< agent-troops pre-push <<<"
+begin="# >>> agent-pinball pre-push >>>"
+end="# <<< agent-pinball pre-push <<<"
 
 managed_block=$(cat <<'HOOK'
-# >>> agent-troops pre-push >>>
+# >>> agent-pinball pre-push >>>
 # Runs the full test tier before a push. See scripts/install-git-hooks.sh.
 (
     set -euo pipefail
@@ -37,12 +37,12 @@ managed_block=$(cat <<'HOOK'
 )
 # The subshell's status is checked here, so a user hook without `set -e`
 # cannot let a failing push through.
-agent_troops_status=$?
-if [ "$agent_troops_status" -ne 0 ]; then
-    exit "$agent_troops_status"
+agent_pinball_status=$?
+if [ "$agent_pinball_status" -ne 0 ]; then
+    exit "$agent_pinball_status"
 fi
-unset agent_troops_status
-# <<< agent-troops pre-push <<<
+unset agent_pinball_status
+# <<< agent-pinball pre-push <<<
 HOOK
 )
 

@@ -284,21 +284,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "troops-cli"
+name = "pinball-cli"
 version = "0.1.0"
 dependencies = [
- "troops-web",
+ "pinball-web",
 ]
 
 [[package]]
-name = "troops-core"
+name = "pinball-core"
 version = "0.1.0"
 dependencies = [
  "rstest",
 ]
 
 [[package]]
-name = "troops-web"
+name = "pinball-web"
 version = "0.1.0"
 
 [[package]]

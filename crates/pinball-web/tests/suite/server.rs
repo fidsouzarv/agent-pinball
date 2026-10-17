@@ -3,8 +3,9 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
+use std::time::{Duration, Instant};
 
-use crate::{probe_health, serve};
+use crate::{probe_health, serve, serve_with_deadline};
 
 /// Starts a server on an ephemeral loopback port. The thread is left running;
 /// it ends with the test process.
@@ -53,6 +54,38 @@ fn oversized_head_gets_431() {
     raw.extend_from_slice(b"\r\n\r\n");
     let response = send(addr, &raw);
     assert!(response.starts_with("HTTP/1.1 431 "), "{response}");
+}
+
+// Adversarial: a client trickling its head one byte at a time, each well
+// inside any per-read timeout, must not hold the sequential loop past the
+// connection deadline. The control client queued behind it must be served.
+#[test]
+fn trickling_client_is_cut_at_the_connection_deadline() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let addr = listener.local_addr().expect("local addr");
+    let allowed = vec!["localhost".to_owned()];
+    thread::spawn(move || serve_with_deadline(&listener, &allowed, Duration::from_millis(300)));
+
+    let mut slow = TcpStream::connect(addr).expect("connect slow client");
+    thread::spawn(move || {
+        for byte in b"GET /healthz HTTP/1.1\r\nX-Slow: ".iter().cycle().take(60) {
+            if slow.write_all(&[*byte]).is_err() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
+    // Let the server pick up the slow client first.
+    thread::sleep(Duration::from_millis(50));
+
+    let started = Instant::now();
+    assert!(probe_health(addr).unwrap());
+    // The slow client alone would hold the loop for 3s (60 bytes x 50ms).
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "control client waited {:?}",
+        started.elapsed()
+    );
 }
 
 #[test]

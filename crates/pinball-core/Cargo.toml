@@ -1,6 +1,6 @@
 [package]
-name = "troops-core"
-description = "Domain types shared by every agent-troops crate."
+name = "pinball-core"
+description = "Domain types shared by every agent-pinball crate."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,4 +1,4 @@
-//! Argument parsing and configuration for the `agent-troops` binary.
+//! Argument parsing and configuration for the `agent-pinball` binary.
 //!
 //! Kept in a library so it is unit-tested; `main.rs` only wires these together.
 

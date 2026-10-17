@@ -5,18 +5,18 @@ use std::net::SocketAddr;
 
 /// Help text printed by `--help`.
 pub const USAGE: &str = "\
-agent-troops: monitoring panel for Codex, Cursor and Claude agents
+agent-pinball: monitoring panel for Codex, Cursor and Claude agents
 
 Usage:
-  agent-troops serve [--bind ADDR]   serve the panel (default 127.0.0.1:4242)
-  agent-troops status                probe /healthz on the configured bind
-  agent-troops --version
-  agent-troops --help
+  agent-pinball serve [--bind ADDR]   serve the panel (default 127.0.0.1:4242)
+  agent-pinball status                probe /healthz on the configured bind
+  agent-pinball --version
+  agent-pinball --help
 
 Environment:
-  AGENT_TROOPS_BIND            bind address (default 127.0.0.1:4242)
-  AGENT_TROOPS_ALLOWED_HOSTS   comma-separated Host allowlist
-  AGENT_TROOPS_IN_CONTAINER    1 inside a container (allows a wildcard bind)
+  AGENT_PINBALL_BIND            bind address (default 127.0.0.1:4242)
+  AGENT_PINBALL_ALLOWED_HOSTS   comma-separated Host allowlist
+  AGENT_PINBALL_IN_CONTAINER    1 inside a container (allows a wildcard bind)
 ";
 
 /// What the user asked the binary to do.

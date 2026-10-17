@@ -1,6 +1,6 @@
-# AGENTS.md — agent-troops contributor guide
+# AGENTS.md — agent-pinball contributor guide
 
-agent-troops is a Star Wars-themed panel that monitors Codex, Cursor and
+agent-pinball is a pinball-themed panel that monitors Codex, Cursor and
 Claude coding agents. Rust 1.95, edition 2024, pinned in `rust-toolchain.toml`.
 
 The full standards, and where each one comes from, are in
@@ -10,12 +10,12 @@ working.
 ## Layout
 
 ```
-crates/troops-core   domain types (AgentKind, ...)
-crates/troops-web    HTTP surface; read-only by design (see its clippy.toml)
-crates/troops-cli    the `agent-troops` binary: parse args, load config, call libraries
+crates/pinball-core  domain types (AgentKind, ...)
+crates/pinball-web   HTTP surface; read-only by design (see its clippy.toml)
+crates/pinball-cli   the `agent-pinball` binary: parse args, load config, call libraries
 ```
 
-Planned crates (`troops-collectors`, `troops-store`, `troops-test-support`)
+Planned crates (`pinball-collectors`, `pinball-store`, `pinball-test-support`)
 are added when they have real code. No empty crates or stubs.
 
 ## Commands
@@ -23,7 +23,7 @@ are added when they have real code. No empty crates or stubs.
 ```bash
 # Everyday loop (cargo install cargo-nextest --locked)
 cargo t                         # skips slow*/stress* modules
-cargo t -p troops-web           # one crate
+cargo t -p pinball-web          # one crate
 
 # Before saying a change is ready (CI runs the same)
 cargo fmt --all -- --check
@@ -59,7 +59,7 @@ Install the pre-push hook once per clone: `scripts/install-git-hooks.sh`.
 2. **Host allowlist before routing** on every request (DNS-rebinding guard).
 3. **Bounded I/O.** Every read has a size cap and a timeout.
 4. **The panel is read-only toward agents.** It never writes their files,
-   spawns or kills them. `crates/troops-web/clippy.toml` enforces it.
+   spawns or kills them. `crates/pinball-web/clippy.toml` enforces it.
 5. **Agent log text is untrusted.** It contains secrets; it goes through a
    sanitizer before being stored or rendered.
 6. **Collectors read from injected roots**, never a hard-coded home directory.

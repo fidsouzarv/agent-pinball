@@ -2,7 +2,7 @@
 # fails the build. An `allow` must be scoped to the function and say why.
 #
 # Clippy reads only the nearest clippy.toml: a crate with its own file
-# (crates/troops-web) repeats these four lines.
+# (crates/pinball-web) repeats these four lines.
 cognitive-complexity-threshold = 15
 too-many-lines-threshold = 80
 too-many-arguments-threshold = 5

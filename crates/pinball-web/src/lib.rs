@@ -1,4 +1,4 @@
-//! HTTP surface of the agent-troops panel.
+//! HTTP surface of the agent-pinball panel.
 //!
 //! Std-only while the panel serves nothing but `/healthz`; a framework comes in
 //! with the first real page. Read-only by design: see this crate's
@@ -7,15 +7,17 @@
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Largest request head read before answering 431, so a client cannot make
 /// the server buffer without bound.
 const MAX_HEAD_BYTES: usize = 8 * 1024;
 /// Most input discarded after refusing an oversized head.
 const MAX_DRAIN_BYTES: u64 = 64 * 1024;
-/// A slow or silent client is dropped after this long.
+/// Write, connect and probe timeout.
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
+/// Total time a connection may spend sending its request, however it trickles.
+const CONNECTION_DEADLINE: Duration = Duration::from_secs(10);
 
 /// How a permitted bind address is exposed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,38 +157,82 @@ fn strip_port(host: &str) -> &str {
 }
 
 /// Serves until the listener fails. One connection at a time: the panel has a
-/// local viewer, and a sequential loop keeps resource use bounded.
+/// local viewer, and a sequential loop keeps resource use bounded. The
+/// per-connection deadline is what keeps one client from holding the loop.
 pub fn serve(listener: &TcpListener, allowed_hosts: &[String]) -> io::Result<()> {
+    serve_with_deadline(listener, allowed_hosts, CONNECTION_DEADLINE)
+}
+
+/// `serve` with an injectable deadline, so tests need not wait seconds.
+pub(crate) fn serve_with_deadline(
+    listener: &TcpListener,
+    allowed_hosts: &[String],
+    deadline: Duration,
+) -> io::Result<()> {
     for stream in listener.incoming() {
         // One bad connection must not stop the server.
-        if let Err(err) = stream.and_then(|stream| handle(&stream, allowed_hosts)) {
-            eprintln!("agent-troops: connection error: {err}");
+        let result = stream.and_then(|stream| {
+            let mut reader = DeadlineReader {
+                stream: &stream,
+                until: Instant::now() + deadline,
+            };
+            handle(&stream, &mut reader, allowed_hosts)
+        });
+        if let Err(err) = result {
+            eprintln!("agent-pinball: connection error: {err}");
         }
     }
     Ok(())
 }
 
-fn handle(stream: &TcpStream, allowed_hosts: &[String]) -> io::Result<()> {
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
+/// Reads under one deadline for the whole connection. A per-read timeout
+/// alone lets a client that sends a byte just under it hold the sequential
+/// accept loop for as long as it likes.
+struct DeadlineReader<'a> {
+    stream: &'a TcpStream,
+    until: Instant,
+}
+
+impl Read for DeadlineReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let remaining = self.until.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "connection deadline exceeded",
+            ));
+        }
+        self.stream.set_read_timeout(Some(remaining))?;
+        let mut stream = self.stream;
+        stream.read(buf)
+    }
+}
+
+fn handle(
+    stream: &TcpStream,
+    reader: &mut DeadlineReader<'_>,
+    allowed_hosts: &[String],
+) -> io::Result<()> {
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
-    match read_head(stream)? {
+    match read_head(&mut *reader)? {
         Some(head) => write_response(stream, route(&head, allowed_hosts)),
         None => {
             write_response(stream, HEAD_TOO_LARGE)?;
             // Closing with unread input makes the kernel send RST, which can
             // discard the 431 before the client reads it. Signal EOF, then
-            // discard a bounded amount of what the client is still sending.
+            // discard a bounded amount of what the client is still sending,
+            // still under the connection deadline.
             stream.shutdown(Shutdown::Write)?;
-            io::copy(&mut stream.take(MAX_DRAIN_BYTES), &mut io::sink())?;
+            io::copy(&mut reader.take(MAX_DRAIN_BYTES), &mut io::sink())?;
             Ok(())
         }
     }
 }
 
 /// Reads up to the blank line ending the head. `None` means it was too large.
-fn read_head(stream: &TcpStream) -> io::Result<Option<String>> {
+fn read_head(input: impl Read) -> io::Result<Option<String>> {
     let limit = u64::try_from(MAX_HEAD_BYTES).unwrap_or(u64::MAX) + 1;
-    let mut reader = BufReader::new(stream.take(limit));
+    let mut reader = BufReader::new(input.take(limit));
     let mut head = String::new();
     loop {
         let mut line = String::new();
