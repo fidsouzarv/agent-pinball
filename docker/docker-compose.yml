@@ -1,0 +1,38 @@
+# docker-compose.yml for agent-pinball.
+#
+# Run from this directory:
+#   docker compose up -d
+# Then open http://localhost:4242/healthz
+services:
+  agent-pinball:
+    image: agent-pinball:local
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: agent-pinball
+    restart: unless-stopped
+    user: "1000:1000"
+    ports:
+      # Loopback only: the panel has no authentication. Do not widen this
+      # without adding auth first (SECURITY.md).
+      - "127.0.0.1:4242:4242"
+    volumes:
+      - pinball-data:/data
+      # The collectors will read each agent's state from the host, read-only.
+      # Uncomment as each collector lands:
+      # - ${HOME}/.codex:/agents/codex:ro
+      # - ${HOME}/.cursor:/agents/cursor:ro
+      # - ${HOME}/.claude:/agents/claude:ro
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/agent-pinball", "status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  pinball-data:
+    name: agent-pinball-data
