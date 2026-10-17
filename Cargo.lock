@@ -100,6 +100,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "pinball-cli"
+version = "0.1.0"
+dependencies = [
+ "pinball-web",
+]
+
+[[package]]
+name = "pinball-core"
+version = "0.1.0"
+dependencies = [
+ "rstest",
+]
+
+[[package]]
+name = "pinball-web"
+version = "0.1.0"
+
+[[package]]
 name = "proc-macro-crate"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -282,24 +300,6 @@ checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow",
 ]
-
-[[package]]
-name = "pinball-cli"
-version = "0.1.0"
-dependencies = [
- "pinball-web",
-]
-
-[[package]]
-name = "pinball-core"
-version = "0.1.0"
-dependencies = [
- "rstest",
-]
-
-[[package]]
-name = "pinball-web"
-version = "0.1.0"
 
 [[package]]
 name = "unicode-ident"

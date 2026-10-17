@@ -17,8 +17,8 @@ publish = false
 
 [workspace.dependencies]
 # Inter-crate dependencies.
-pinball-core = { path = "crates/pinball-core" }
-pinball-web = { path = "crates/pinball-web" }
+pinball-core = { path = "crates/pinball-core", version = "0.1.0" }
+pinball-web = { path = "crates/pinball-web", version = "0.1.0" }
 
 # Testing.
 rstest = "0.26"
