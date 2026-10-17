@@ -25,7 +25,7 @@ of Codex, Cursor and Claude agents and shows it. It has no authentication yet.
   and reads and writes time out after 5 seconds.
 - **Secrets in agent logs.** Agent transcripts routinely contain API keys and
   private code. Text read from them must pass the sanitizer boundary before it
-  is stored or rendered (PADROES.md §5).
+  is stored or rendered (STANDARDS.md §5).
 - **Agent integrity.** The panel never writes to agent directories, spawns or
   kills agents. `crates/pinball-web/clippy.toml` enforces this, and the Docker
   setup mounts agent directories read-only.

@@ -3,9 +3,8 @@
 agent-pinball is a pinball-themed panel that monitors Codex, Cursor and
 Claude coding agents. Rust 1.95, edition 2024, pinned in `rust-toolchain.toml`.
 
-The full standards, and where each one comes from, are in
-[PADROES.md](PADROES.md). This file is the short version an agent needs while
-working.
+The full standards are in [STANDARDS.md](STANDARDS.md). This file is the
+short version an agent needs while working.
 
 ## Layout
 
@@ -91,4 +90,4 @@ copyleft licenses, unknown registries and wildcard versions.
 
 `docker/Dockerfile` (multi-stage, non-root, healthcheck) and
 `docker/docker-compose.yml` (published on `127.0.0.1` only, agent directories
-mounted `:ro`). See PADROES.md §6.
+mounted `:ro`). See STANDARDS.md §6.

@@ -6,7 +6,7 @@ too-many-arguments-threshold = 5
 type-complexity-threshold = 250
 
 # The panel observes agents; it never controls them or edits their files
-# (PADROES.md §5). A change to that needs auth and confirmation designed first,
+# (STANDARDS.md §5). A change to that needs auth and confirmation designed first,
 # not an `allow`.
 disallowed-methods = [
     { path = "std::process::Command::new", reason = "the panel is read-only: it never spawns or controls agents" },

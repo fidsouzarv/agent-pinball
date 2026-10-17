@@ -34,7 +34,7 @@ unwrap_used = "warn"
 expect_used = "warn"
 dbg_macro = "warn"
 todo = "warn"
-# Complexity limits; thresholds live in clippy.toml (PADROES.md §4).
+# Complexity limits; thresholds live in clippy.toml (STANDARDS.md §4).
 cognitive_complexity = "warn"
 too_many_lines = "warn"
 too_many_arguments = "warn"

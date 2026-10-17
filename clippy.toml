@@ -1,4 +1,4 @@
-# Complexity limits (PADROES.md §4). With `-D warnings` in CI, crossing one
+# Complexity limits (STANDARDS.md §4). With `-D warnings` in CI, crossing one
 # fails the build. An `allow` must be scoped to the function and say why.
 #
 # Clippy reads only the nearest clippy.toml: a crate with its own file
