@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pinball Component Catalog</title>
+  <meta name="description" content="Every agent-pinball component in every state, for design review and implementation.">
+  <link rel="stylesheet" href="pinball.css">
+  <script src="mock-data.js" defer></script>
+  <script src="pinball.js" defer></script>
+</head>
+<body data-page="catalog">
+  <div class="starfield" aria-hidden="true"></div>
+
+  <main class="cabinet">
+    <header class="catalog-intro">
+      <h1>Component catalog</h1>
+      <p>Every piece of the agent-pinball table in every state. Same CSS and JS as
+        <a href="index.html">the table</a>; specs are in <code>docs/design/COMPONENTS.md</code>.</p>
+    </header>
+
+    <section class="catalog-section" aria-labelledby="c-tokens">
+      <h2 id="c-tokens">Design tokens</h2>
+      <p>Cabinet neutrals, one pair of colours per client (after the three reference tables), status inserts and context levels.</p>
+      <div class="swatches">
+        <div class="swatch" data-swatch="--claude"></div>
+        <div class="swatch" data-swatch="--claude-2"></div>
+        <div class="swatch" data-swatch="--codex"></div>
+        <div class="swatch" data-swatch="--codex-2"></div>
+        <div class="swatch" data-swatch="--cursor"></div>
+        <div class="swatch" data-swatch="--cursor-2"></div>
+        <div class="swatch" data-swatch="--st-running"></div>
+        <div class="swatch" data-swatch="--st-idle"></div>
+        <div class="swatch" data-swatch="--st-stuck"></div>
+        <div class="swatch" data-swatch="--st-error"></div>
+        <div class="swatch" data-swatch="--st-ended"></div>
+        <div class="swatch" data-swatch="--lv-warm"></div>
+        <div class="swatch" data-swatch="--lv-hot"></div>
+        <div class="swatch" data-swatch="--lv-crit"></div>
+        <div class="swatch" data-swatch="--dmd-on"></div>
+        <div class="swatch" data-swatch="--cab-panel"></div>
+      </div>
+    </section>
+
+    <section class="catalog-section" aria-labelledby="c-status">
+      <h2 id="c-status">Agent bumper: status</h2>
+      <p>One card per session. The ball orbits the ring while running, rests in the saucer when idle,
+        rattles when stuck. Error stamps TILT, ended greys out to GAME OVER.</p>
+      <div class="demo-grid">
+        <div class="demo">
+          <span class="demo-label">Running</span>
+          <div data-demo="status-running"></div>
+          <div class="demo-actions">
+            <button class="toggle" type="button" data-action="hit" data-for="status-running">Token burst</button>
+            <button class="toggle" type="button" data-action="turn" data-for="status-running">Finish turn</button>
+            <button class="toggle" type="button" data-action="saved" data-for="status-running">Ball saved</button>
+          </div>
+        </div>
+        <div class="demo"><span class="demo-label">Idle</span><div data-demo="status-idle"></div></div>
+        <div class="demo"><span class="demo-label">Stuck</span><div data-demo="status-stuck"></div></div>
+        <div class="demo"><span class="demo-label">Error</span><div data-demo="status-error"></div></div>
+        <div class="demo"><span class="demo-label">Ended</span><div data-demo="status-ended"></div></div>
+      </div>
+    </section>
+
+    <section class="catalog-section" aria-labelledby="c-levels">
+      <h2 id="c-levels">Agent bumper: context levels</h2>
+      <p>The ring keeps the client colour below 60%, then goes amber, orange and red at 60, 80 and 95%.
+        TILT WARNING lights from 80%.</p>
+      <div class="demo-grid">
+        <div class="demo"><span class="demo-label">Below 60%</span><div data-demo="level-ok"></div></div>
+        <div class="demo"><span class="demo-label">60 to 80%</span><div data-demo="level-warm"></div></div>
+        <div class="demo">
+          <span class="demo-label">80 to 95%</span>
+          <div data-demo="level-hot"></div>
+          <div class="demo-actions">
+            <button class="toggle" type="button" data-action="warning" data-for="level-hot">Tilt warning banner</button>
+          </div>
+        </div>
+        <div class="demo"><span class="demo-label">95% and up</span><div data-demo="level-crit"></div></div>
+      </div>
+    </section>
+
+    <section class="catalog-section" aria-labelledby="c-gaps">
+      <h2 id="c-gaps">Agent bumper: missing data</h2>
+      <p>Cursor does not record token spend locally, so its reels stay dark. When a client does not
+        report the model limit, the cap reads <code>??</code> and the ring stays empty.</p>
+      <div class="demo-grid">
+        <div class="demo"><span class="demo-label">No coins (Cursor)</span><div data-demo="kind-cursor"></div></div>
+        <div class="demo"><span class="demo-label">Limit unknown</span><div data-demo="kind-unknown"></div></div>
+      </div>
+    </section>
+
+    <section class="catalog-section" aria-labelledby="c-parts">
+      <h2 id="c-parts">Score reels, insert lights, drop targets</h2>
+      <p>Reels roll each digit to its new value with a spring. Inserts pair colour with shape and a label.
+        Drop targets fall one per finished turn and reset after five.</p>
+      <div class="demo-grid">
+        <div class="demo">
+          <span class="demo-label">Score reels</span>
+          <div data-demo-reels></div>
+          <div class="demo-actions"><button class="toggle" type="button" data-action-reels="add">Add coins</button></div>
+          <span class="demo-label">Unavailable</span>
+          <div data-demo-reels-off></div>
+        </div>
+        <div class="demo">
+          <span class="demo-label">Insert lights</span>
+          <div class="demo-row">
+            <span data-demo-insert="running"></span>
+            <span data-demo-insert="idle"></span>
+            <span data-demo-insert="stuck"></span>
+            <span data-demo-insert="error"></span>
+            <span data-demo-insert="ended"></span>
+          </div>
+        </div>
+        <div class="demo">
+          <span class="demo-label">Drop targets (0 to 4 down)</span>
+          <div class="demo-row">
+            <span data-demo-targets="0"></span>
+            <span data-demo-targets="1"></span>
+            <span data-demo-targets="2"></span>
+            <span data-demo-targets="3"></span>
+            <span data-demo-targets="4"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="catalog-section" aria-labelledby="c-ramp">
+      <h2 id="c-ramp">Context ramp</h2>
+      <p>The detail view's gauge: a wireform ramp that fills with light, the ball riding at the current level.</p>
+      <div data-demo-ramp></div>
+      <label class="demo-label" for="ramp-input">Context used</label>
+      <input id="ramp-input" type="range" min="0" max="100" value="72" data-ramp-input>
+    </section>
+
+    <section class="catalog-section" aria-labelledby="c-dmd">
+      <h2 id="c-dmd">Dot-matrix display</h2>
+      <p>Total coins as the score, a ticker for routine events, and a full-screen takeover for the big
+        moments: BALL SAVED, MULTIBALL, TILT, GAME OVER.</p>
+      <div class="dmd">
+        <div class="dmd-screen">
+          <div class="dmd-main"><span class="dmd-score dmd-dots">0</span><small class="dmd-dots dmd-fine">COINS</small></div>
+          <div class="dmd-ticker dmd-dots dmd-fine"></div>
+          <div class="dmd-takeover dmd-dots" aria-hidden="true"></div>
+        </div>
+      </div>
+      <div class="demo-actions">
+        <button class="toggle" type="button" data-action-dmd="say">Ticker message</button>
+        <button class="toggle" type="button" data-action-dmd="takeover">Takeover</button>
+      </div>
+    </section>
+
+    <section class="catalog-section" aria-labelledby="c-machine">
+      <h2 id="c-machine">Flippers, slingshots, plunger</h2>
+      <p>Decoration that reacts to the stream: flippers flick on every event, slingshots kick on token
+        bursts, the plunger fires when a new session starts. Click the plunger to try it.</p>
+      <div class="machine-demo">
+        <div class="lower" data-slot="lower"></div>
+        <div data-slot="shooter"></div>
+      </div>
+      <div class="demo-actions">
+        <button class="toggle" type="button" data-action-machine="flip">Flip and kick</button>
+      </div>
+    </section>
+
+    <section class="catalog-section" aria-labelledby="c-backglass">
+      <h2 id="c-backglass">Backglass detail</h2>
+      <p>Opens from any bumper: context ramp, context history with compactions marked, coins breakdown
+        and session facts. A native dialog, so focus and Escape behave.</p>
+      <div class="demo-actions">
+        <button class="toggle" type="button" data-action-drawer>Open backglass</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

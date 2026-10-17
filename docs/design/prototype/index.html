@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en" data-view="tilt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Pinball</title>
+  <meta name="description" content="Design prototype of the agent-pinball dashboard, driven by mock data.">
+  <link rel="stylesheet" href="pinball.css">
+  <script src="mock-data.js" defer></script>
+  <script src="pinball.js" defer></script>
+</head>
+<body data-page="table">
+  <div class="starfield" aria-hidden="true"></div>
+  <p id="announcer" class="visually-hidden" aria-live="polite"></p>
+
+  <main class="cabinet">
+    <!-- Backbox: marquee, dot-matrix display, one score window per client. -->
+    <header class="backbox">
+      <div class="marquee">
+        <div class="bulbs" data-bulbs="30" aria-hidden="true"></div>
+        <h1 class="title"><span class="glint">Agent Pinball</span></h1>
+        <p class="tagline">Every agent on this machine &middot; context &amp; coins</p>
+        <div class="bulbs" data-bulbs="30" aria-hidden="true"></div>
+      </div>
+
+      <div class="dmd">
+        <div class="dmd-screen">
+          <div class="dmd-main"><span class="dmd-score dmd-dots">0</span><small class="dmd-dots dmd-fine">COINS</small></div>
+          <div class="dmd-ticker dmd-dots dmd-fine">INSERT COIN</div>
+          <div class="dmd-takeover dmd-dots" aria-hidden="true"></div>
+        </div>
+      </div>
+
+      <div class="players">
+        <div class="player" data-kind="claude">
+          <div class="player-label"><span>Player 1</span><b>Claude</b></div>
+          <div class="dmd-dots player-score">0</div>
+        </div>
+        <div class="player" data-kind="codex">
+          <div class="player-label"><span>Player 2</span><b>Codex</b></div>
+          <div class="dmd-dots player-score">0</div>
+        </div>
+        <div class="player" data-kind="cursor">
+          <div class="player-label"><span>Player 3</span><b>Cursor</b></div>
+          <div class="dmd-dots player-score">0</div>
+        </div>
+        <div class="player balls-in-play">
+          <div class="player-label"><span>Balls in play</span></div>
+          <div class="dmd-dots balls-count">0</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Playfield: parallax layers around the three lanes. -->
+    <section class="table" aria-label="Playfield">
+      <div class="playfield">
+        <div class="layer layer-art" data-slot="art"></div>
+
+        <div class="field">
+          <div class="lanes">
+            <section class="lane" data-lane="claude" data-kind="claude" aria-labelledby="lane-claude">
+              <div class="lane-head">
+                <h2 class="lane-name" id="lane-claude">Claude</h2>
+                <div class="lane-meta"></div>
+                <div class="chevrons" aria-hidden="true"></div>
+              </div>
+              <div class="lane-body"></div>
+              <p class="lane-empty" hidden>No balls in play</p>
+            </section>
+
+            <section class="lane" data-lane="codex" data-kind="codex" aria-labelledby="lane-codex">
+              <div class="lane-head">
+                <h2 class="lane-name" id="lane-codex">Codex</h2>
+                <div class="lane-meta"></div>
+                <div class="chevrons" aria-hidden="true"></div>
+              </div>
+              <div class="lane-body"></div>
+              <p class="lane-empty" hidden>No balls in play</p>
+            </section>
+
+            <section class="lane" data-lane="cursor" data-kind="cursor" aria-labelledby="lane-cursor">
+              <div class="lane-head">
+                <h2 class="lane-name" id="lane-cursor">Cursor</h2>
+                <div class="lane-meta"></div>
+                <div class="chevrons" aria-hidden="true"></div>
+              </div>
+              <div class="lane-body"></div>
+              <p class="lane-empty" hidden>No balls in play</p>
+            </section>
+          </div>
+
+          <div data-slot="shooter"></div>
+        </div>
+
+        <div class="lower" data-slot="lower"></div>
+
+        <div class="layer layer-wire" data-slot="wire"></div>
+        <div class="layer layer-glass" aria-hidden="true"></div>
+
+        <!-- Apron: how to read the table, and totals per client. -->
+        <footer class="apron">
+          <section class="card">
+            <h2>How to read the table</h2>
+            <ul class="legend">
+              <li><span class="legend-icon ring"></span><span><b>Bumper ring</b> is context used against the model limit.</span></li>
+              <li><span class="legend-icon reel"></span><span><b>Score reels</b> are coins: every token billed so far.</span></li>
+              <li><span class="legend-icon insert"></span><span><b>Insert light</b> is status: running, idle, stuck, error, ended.</span></li>
+              <li><span class="legend-icon target"></span><span><b>Drop targets</b> fall one per finished turn.</span></li>
+              <li><span class="legend-icon ball"></span><span><b>Extra balls</b> are subagents. The main ball spins faster as coins burn faster.</span></li>
+              <li><span class="legend-icon warn"></span><span><b>TILT WARNING</b> at 80% context. <b>BALL SAVED</b> means it compacted.</span></li>
+            </ul>
+          </section>
+          <section class="card">
+            <h2>Table totals</h2>
+            <table class="totals">
+              <thead><tr><th scope="col">Client</th><th scope="col">Balls</th><th scope="col">Coins</th><th scope="col">Avg ctx</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </section>
+        </footer>
+      </div>
+    </section>
+
+    <!-- Coin door: link state and view toggles. -->
+    <footer class="coin-door">
+      <div class="coin-slots" aria-hidden="true">
+        <span class="coin-slot" data-live="true"></span>
+        <span class="coin-slot" data-live="true"></span>
+      </div>
+      <div class="link-state" data-live="true" role="status">LIVE</div>
+      <div class="toggles">
+        <button class="toggle" type="button" data-toggle="flat" aria-pressed="false">Flat view</button>
+        <button class="toggle" type="button" data-toggle="pause" aria-pressed="false">Pause demo</button>
+        <button class="toggle" type="button" data-toggle="unplug" aria-pressed="false">Drop link</button>
+        <a class="toggle" href="catalog.html">Component catalog</a>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>
