@@ -346,9 +346,18 @@ All routes are `GET`, behind the `Host` allowlist.
 | `GET /` | the server-rendered playfield; works without JavaScript, just without live updates |
 | `GET /agents/{id}` | the detail fragment for one session (HTML) |
 | `GET /api/board` | the board as JSON, for scripts and tests |
-| `GET /events` | Server-Sent Events: `board` (full snapshot on connect and after lag), `delta` (one session changed), `event` (compaction, error, ended) |
+| `GET /events` | Server-Sent Events: `board` (full snapshot on connect and after lag), `delta` (one session changed), `event` (`{ "type": "event", "kind", "sessionId", ...payload }`, where `kind` is one of `tokens {amount}`, `turn_end {turns}`, `compacted {preTokens, postTokens}`, `launched`, `status {status}`, `removed`). The UI animates on these: bumper hit, drop target, BALL SAVED, plunger, TILT / GAME OVER |
 | `GET /assets/*` | CSS, JS, SVG embedded in the binary, content-hashed names, `Cache-Control: immutable` |
 | `GET /healthz` | `ok`, for the container healthcheck |
+
+On the wire a session is camelCase JSON: `id`, `kind`, `project`, `title`,
+`model`, `status`, `context { used, limit | null }`,
+`fichas { input, output, cacheRead, cacheWrite } | null`, `turns`,
+`compactions`, `subagents [{ id, status }]`, `pid | null`, `startedAt`,
+`lastActivityAt` (epoch ms) and `history` (context samples). Rust types stay
+snake_case and serialize with `#[serde(rename_all = "camelCase")]`. The shapes
+are defined in
+[docs/design/COMPONENTS.md#data-contract](design/COMPONENTS.md#data-contract).
 
 Headers on every response: a strict `Content-Security-Policy`
 (`default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self';
