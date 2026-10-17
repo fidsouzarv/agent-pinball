@@ -5,6 +5,7 @@ Claude coding agents. Rust 1.95, edition 2024, pinned in `rust-toolchain.toml`.
 
 The full standards are in [STANDARDS.md](STANDARDS.md). This file is the
 short version an agent needs while working.
+The architecture and data sources are in [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md).
 
 ## Layout
 
