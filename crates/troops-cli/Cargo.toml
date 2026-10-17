@@ -1,0 +1,22 @@
+[package]
+name = "troops-cli"
+description = "The agent-troops binary: parses arguments, loads config once, calls the library crates."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "troops_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-troops"
+path = "src/main.rs"
+
+[dependencies]
+troops-web = { workspace = true }
+
+[lints]
+workspace = true

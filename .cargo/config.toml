@@ -1,0 +1,7 @@
+# Aliases for the two test tiers in .config/nextest.toml.
+#
+#   cargo t     everyday: skips modules named slow* / stress*
+#   cargo tf    the gate: the whole workspace, every tier
+[alias]
+t = "nextest run"
+tf = "nextest run --workspace -P full"

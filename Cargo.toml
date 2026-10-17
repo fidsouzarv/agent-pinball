@@ -1,0 +1,61 @@
+[workspace]
+resolver = "3"
+# Crates are added when they have a shipped caller (see AGENTS.md): collectors,
+# store and test-support join once there is code for them.
+members = [
+    "crates/troops-core",
+    "crates/troops-web",
+    "crates/troops-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# Inter-crate dependencies.
+troops-core = { path = "crates/troops-core" }
+troops-web = { path = "crates/troops-web" }
+
+# Testing.
+rstest = "0.26"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Runtime paths use explicit fallbacks; tests opt back in with `allow`.
+unwrap_used = "warn"
+expect_used = "warn"
+dbg_macro = "warn"
+todo = "warn"
+# Complexity limits; thresholds live in clippy.toml (PADROES.md §4).
+cognitive_complexity = "warn"
+too_many_lines = "warn"
+too_many_arguments = "warn"
+type_complexity = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+opt-level = 0
+# Line tables keep file:line in panics without full debuginfo in every test
+# binary. Use `RUSTFLAGS="-C debuginfo=2"` for a real debugger session.
+debug = "line-tables-only"
+
+# Deps are rebuilt rarely and dominate the graph; optimising them makes tests faster.
+[profile.dev.package."*"]
+debug = false
+opt-level = 1
+
+# Proc macros and build scripts are run at compile time, so optimise them.
+[profile.dev.build-override]
+opt-level = 3

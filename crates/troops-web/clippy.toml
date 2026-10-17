@@ -1,0 +1,19 @@
+# Clippy reads only the nearest clippy.toml, so the workspace limits are
+# repeated here (keep in sync with the root clippy.toml).
+cognitive-complexity-threshold = 15
+too-many-lines-threshold = 80
+too-many-arguments-threshold = 5
+type-complexity-threshold = 250
+
+# The panel observes agents; it never controls them or edits their files
+# (PADROES.md §5). A change to that needs auth and confirmation designed first,
+# not an `allow`.
+disallowed-methods = [
+    { path = "std::process::Command::new", reason = "the panel is read-only: it never spawns or controls agents" },
+    { path = "std::fs::write", reason = "the panel is read-only" },
+    { path = "std::fs::rename", reason = "the panel is read-only" },
+    { path = "std::fs::copy", reason = "the panel is read-only" },
+    { path = "std::fs::remove_file", reason = "the panel is read-only" },
+    { path = "std::fs::remove_dir", reason = "the panel is read-only" },
+    { path = "std::fs::remove_dir_all", reason = "the panel is read-only" },
+]

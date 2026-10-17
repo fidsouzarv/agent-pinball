@@ -1,0 +1,25 @@
+# gitleaks configuration for agent-troops.
+#
+# Runs in CI on every push/PR (ci.yml) and weekly over the full history
+# (secret-scan.yml).
+#
+# The panel reads agent logs that routinely contain API keys, so test fixtures
+# will carry key-shaped strings. Every fake must use the FAKE marker below so a
+# reader sees it is fake at a glance, and so a real key that drifts in fails CI.
+
+title = "agent-troops secret-scan config"
+
+[extend]
+useDefault = true
+
+# Fail-closed: no path-based allowlist. Every exemption is a specific shape.
+[allowlist]
+description = "Deliberate test fixtures"
+regexes = [
+    '''sk-ant-FAKE[A-Za-z0-9_\-]*''',
+    '''sk-proj-FAKE[A-Za-z0-9_\-]*''',
+    '''sk-FAKE[A-Za-z0-9_\-]*''',
+    '''ghp_FAKE[A-Za-z0-9]*''',
+    '''AKIAFAKE[A-Z0-9]*''',
+    '''FAKEfake[A-Za-z0-9]*''',
+]

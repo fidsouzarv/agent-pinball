@@ -1,0 +1,16 @@
+# Build artefacts.
+target/
+**/target/
+
+# VCS internals.
+.git/
+
+# Editor / OS.
+.idea/
+.vscode/
+.DS_Store
+*.log
+
+# Local secrets. Keep this block last so no later negation re-includes them.
+.env
+docker/.env
