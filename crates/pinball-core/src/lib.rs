@@ -3,8 +3,17 @@
 use std::fmt;
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
+
+mod setup;
+
+pub use setup::{
+    AgentReport, HookEventKind, HookRecord, HookState, ParseHookEventKindError, SetupReport,
+};
+
 /// A coding agent the panel monitors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum AgentKind {
     /// OpenAI Codex CLI.
     Codex,

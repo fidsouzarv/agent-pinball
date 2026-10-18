@@ -12,6 +12,7 @@ The architecture and data sources are in [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DES
 ```
 crates/pinball-core  domain types (AgentKind, ...)
 crates/pinball-web   HTTP surface; read-only by design (see its clippy.toml)
+crates/pinball-setup `setup`: detects agents, installs hook entries, hook spool
 crates/pinball-cli   the `agent-pinball` binary: parse args, load config, call libraries
 ```
 
@@ -59,7 +60,10 @@ Install the pre-push hook once per clone: `scripts/install-git-hooks.sh`.
 2. **Host allowlist before routing** on every request (DNS-rebinding guard).
 3. **Bounded I/O.** Every read has a size cap and a timeout.
 4. **The panel is read-only toward agents.** It never writes their files,
-   spawns or kills them. `crates/pinball-web/clippy.toml` enforces it.
+   spawns or kills them. `crates/pinball-web/clippy.toml` enforces it. The one
+   writer is `agent-pinball setup` (crate `pinball-setup`), which only touches
+   its own hook entries, with a diff, confirmation and backup
+   ([ADR 0006](docs/adr/0006-setup-writes-agent-hooks-from-the-cli-only.md)).
 5. **Agent log text is untrusted.** It contains secrets; it goes through a
    sanitizer before being stored or rendered.
 6. **Collectors read from injected roots**, never a hard-coded home directory.

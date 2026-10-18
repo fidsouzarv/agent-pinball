@@ -1,0 +1,158 @@
+/*
+ * Setup page layout on top of pinball.css. Only tokens and components from
+ * the design system (docs/design/COMPONENTS.md); nothing here redefines them.
+ */
+
+/* The setup table stays flat: it is read closely, not watched. */
+.setup-playfield {
+  padding-top: 26px;
+  transform: none;
+}
+
+.setup-playfield .lanes { margin-bottom: 26px; }
+.setup-playfield .lane { min-height: 0; min-width: 0; }
+/* An open diff scrolls inside its card instead of widening the lane. */
+.setup-playfield .lane-body { grid-template-columns: minmax(0, 1fr); }
+
+.setup-card {
+  min-width: 0;
+  --p: var(--claude);
+  --p2: var(--claude-2);
+  position: relative;
+  padding: 14px 14px 12px;
+  border-radius: 16px;
+  background:
+    linear-gradient(160deg, #ffffff12, transparent 40%),
+    linear-gradient(180deg, color-mix(in srgb, var(--p) 16%, var(--cab-panel)), var(--cab-panel));
+  border: 1px solid color-mix(in srgb, var(--p) 40%, #000);
+  box-shadow: 0 10px 22px -12px #000, inset 0 1px 0 #ffffff18;
+  clip-path: polygon(0 10px, 10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px));
+}
+
+.setup-card[data-kind="codex"] { --p: var(--codex); --p2: var(--codex-2); }
+.setup-card[data-kind="cursor"] { --p: var(--cursor); --p2: var(--cursor-2); }
+
+.checks {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "light title"
+    "detail detail";
+  gap: 4px 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.check .insert { grid-area: light; }
+.check-title {
+  grid-area: title;
+  justify-self: end;
+  font: 400 15px/1 var(--font-display);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--p);
+}
+.check-detail,
+.check-time {
+  grid-column: 1 / -1;
+  min-width: 0;
+  font: 11.5px/1.35 var(--font-dmd);
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+.check-detail { grid-area: detail; }
+.check-detail:empty { display: none; }
+.check-time:empty { display: none; }
+
+/* Check lamps reuse the insert shapes, so state never depends on colour. */
+.insert[data-check="ok"] { --c: var(--st-running); }
+.insert[data-check="ok"] .insert-lamp { border-radius: 50%; }
+.insert[data-check="todo"] { --c: var(--st-stuck); }
+.insert[data-check="todo"] .insert-lamp { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.insert[data-check="waiting"] { --c: var(--st-idle); }
+.insert[data-check="waiting"] .insert-lamp { clip-path: polygon(50% 0, 100% 100%, 0 100%); animation: blink 1.4s steps(1, end) infinite; }
+.insert[data-check="error"] { --c: var(--st-error); }
+.insert[data-check="error"] .insert-lamp { clip-path: polygon(20% 0, 50% 30%, 80% 0, 100% 20%, 70% 50%, 100% 80%, 80% 100%, 50% 70%, 20% 100%, 0 80%, 30% 50%, 0 20%); }
+.insert[data-check="absent"] .insert-lamp { box-shadow: none; opacity: .5; }
+
+.setup-note {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--st-stuck);
+  background: #0006;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.setup-diff { margin-top: 12px; }
+
+.setup-diff summary {
+  cursor: pointer;
+  font: 700 11px var(--font-body);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--p2);
+}
+
+.setup-diff summary:focus-visible,
+.agent-brief:focus-visible { outline: 3px solid var(--dmd-hot); outline-offset: 2px; }
+
+.setup-diff pre,
+.agent-brief {
+  max-height: 260px;
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--dmd-bg);
+  color: var(--dmd-hot);
+  font: 11.5px/1.45 var(--font-dmd);
+  white-space: pre;
+}
+
+.steps {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  font-size: 13px;
+}
+
+.steps li + li { margin-top: 4px; }
+
+.card code,
+.card kbd {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #1a142014;
+  font: 12px var(--font-dmd);
+  overflow-wrap: anywhere;
+}
+
+/* The apron legend sits on the cream card, so lamps need a dark backing. */
+.check-legend .insert {
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: var(--cab-black);
+}
+
+.agent-brief { max-height: 200px; }
+
+.copy { margin-top: 10px; color: var(--ink); }
+
+/* Long paths and the brief must wrap or scroll inside their card, never
+ * widen the apron's columns. */
+.setup-playfield .apron { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+.setup-playfield .card { min-width: 0; }
+
+@media (max-width: 640px) {
+  .setup-playfield .apron { grid-template-columns: minmax(0, 1fr); }
+}

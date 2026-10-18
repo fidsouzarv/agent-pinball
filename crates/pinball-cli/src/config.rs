@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 /// Loopback by default: the panel has no authentication.
 pub const DEFAULT_BIND: &str = "127.0.0.1:4242";
@@ -19,6 +20,17 @@ pub struct Config {
     /// Running inside a container, where a wildcard bind is a namespace
     /// requirement rather than network exposure.
     pub in_container: bool,
+    /// Claude Code root (`AGENT_PINBALL_CLAUDE_ROOT`, default `$HOME/.claude`).
+    pub claude_root: Option<PathBuf>,
+    /// Codex root (`AGENT_PINBALL_CODEX_ROOT`, default `$HOME/.codex`).
+    pub codex_root: Option<PathBuf>,
+    /// Cursor's dot directory, where its hooks live (`$HOME/.cursor`).
+    pub cursor_home: Option<PathBuf>,
+    /// agent-pinball's own state (`AGENT_PINBALL_STATE_DIR`, default
+    /// `$HOME/.local/state/agent-pinball`).
+    pub state_dir: Option<PathBuf>,
+    /// `PATH`, split, for finding agent binaries.
+    pub path_dirs: Vec<PathBuf>,
 }
 
 /// Invalid setting.
@@ -58,10 +70,29 @@ impl Config {
         );
         let in_container = lookup("AGENT_PINBALL_IN_CONTAINER")
             .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+        // A missing HOME only matters to `setup`, which reports it; `serve`
+        // and `status` must keep working without one.
+        let home = lookup("HOME")
+            .filter(|home| !home.is_empty())
+            .map(PathBuf::from);
+        let path_or_home = |key: &str, under_home: &str| {
+            lookup(key)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .or_else(|| home.as_ref().map(|home| home.join(under_home)))
+        };
+        let path_dirs = lookup("PATH")
+            .map(|raw| std::env::split_paths(&raw).collect())
+            .unwrap_or_default();
         Ok(Self {
             bind,
             allowed_hosts,
             in_container,
+            claude_root: path_or_home("AGENT_PINBALL_CLAUDE_ROOT", ".claude"),
+            codex_root: path_or_home("AGENT_PINBALL_CODEX_ROOT", ".codex"),
+            cursor_home: home.as_ref().map(|home| home.join(".cursor")),
+            state_dir: path_or_home("AGENT_PINBALL_STATE_DIR", ".local/state/agent-pinball"),
+            path_dirs,
         })
     }
 }
@@ -106,6 +137,41 @@ mod tests {
         assert_eq!(config.bind, "0.0.0.0:4242".parse().unwrap());
         assert_eq!(config.allowed_hosts, ["localhost", "host.docker.internal"]);
         assert!(config.in_container);
+    }
+
+    #[test]
+    fn agent_roots_default_under_home() {
+        let config = Config::from_lookup(lookup(&[
+            ("HOME", "/home/u"),
+            ("PATH", "/usr/bin:/opt/bin"),
+        ]))
+        .unwrap();
+        assert_eq!(config.claude_root, Some(PathBuf::from("/home/u/.claude")));
+        assert_eq!(config.codex_root, Some(PathBuf::from("/home/u/.codex")));
+        assert_eq!(config.cursor_home, Some(PathBuf::from("/home/u/.cursor")));
+        assert_eq!(
+            config.state_dir,
+            Some(PathBuf::from("/home/u/.local/state/agent-pinball"))
+        );
+        assert_eq!(
+            config.path_dirs,
+            ["/usr/bin", "/opt/bin"].map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn agent_roots_can_be_overridden_and_need_no_home() {
+        let config = Config::from_lookup(lookup(&[
+            ("AGENT_PINBALL_CLAUDE_ROOT", "/c"),
+            ("AGENT_PINBALL_CODEX_ROOT", "/x"),
+            ("AGENT_PINBALL_STATE_DIR", "/s"),
+        ]))
+        .unwrap();
+        assert_eq!(config.claude_root, Some(PathBuf::from("/c")));
+        assert_eq!(config.codex_root, Some(PathBuf::from("/x")));
+        assert_eq!(config.state_dir, Some(PathBuf::from("/s")));
+        assert_eq!(config.cursor_home, None);
+        assert!(config.path_dirs.is_empty());
     }
 
     #[test]

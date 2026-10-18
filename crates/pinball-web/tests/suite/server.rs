@@ -5,19 +5,19 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::{probe_health, serve, serve_with_deadline};
+use crate::{Site, probe_health, serve, serve_with_deadline};
 
 /// Starts a server on an ephemeral loopback port. The thread is left running;
 /// it ends with the test process.
 fn start() -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
     let addr = listener.local_addr().expect("local addr");
-    let allowed = vec!["localhost".to_owned(), "127.0.0.1".to_owned()];
-    thread::spawn(move || serve(&listener, &allowed));
+    let site = Site::new(vec!["localhost".to_owned(), "127.0.0.1".to_owned()]);
+    thread::spawn(move || serve(&listener, &site));
     addr
 }
 
-fn send(addr: SocketAddr, raw: &[u8]) -> String {
+pub(super) fn send(addr: SocketAddr, raw: &[u8]) -> String {
     let mut stream = TcpStream::connect(addr).expect("connect");
     stream.write_all(raw).expect("write");
     let mut response = String::new();
@@ -63,8 +63,8 @@ fn oversized_head_gets_431() {
 fn trickling_client_is_cut_at_the_connection_deadline() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
     let addr = listener.local_addr().expect("local addr");
-    let allowed = vec!["localhost".to_owned()];
-    thread::spawn(move || serve_with_deadline(&listener, &allowed, Duration::from_millis(300)));
+    let site = Site::new(vec!["localhost".to_owned()]);
+    thread::spawn(move || serve_with_deadline(&listener, &site, Duration::from_millis(300)));
 
     let mut slow = TcpStream::connect(addr).expect("connect slow client");
     thread::spawn(move || {

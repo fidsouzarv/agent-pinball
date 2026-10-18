@@ -16,7 +16,13 @@ name = "agent-pinball"
 path = "src/main.rs"
 
 [dependencies]
+clap = { workspace = true }
+pinball-core = { workspace = true }
+pinball-setup = { workspace = true }
 pinball-web = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

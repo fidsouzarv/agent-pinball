@@ -22,7 +22,9 @@ and whether it is working, waiting, stuck or broken.
 
 - **Controlling agents.** The panel never starts, stops, signals, prompts or
   edits an agent, and never writes to an agent's files (AGENTS.md invariant 4,
-  [ADR 0001](adr/0001-monitor-only-read-only-panel.md)).
+  [ADR 0001](adr/0001-monitor-only-read-only-panel.md)). The one exception is
+  `agent-pinball setup`, run by the user in a terminal, which adds or removes
+  agent-pinball's own hook entries ([ADR 0006](adr/0006-setup-writes-agent-hooks-from-the-cli-only.md), §14).
 - **Cost accounting.** Tokens are shown as raw counts. No prices, no currency.
 - **Multiple users or machines.** One user, one workstation, a loopback bind
   (invariant 1). No authentication, so no remote access.
@@ -349,6 +351,7 @@ All routes are `GET`, behind the `Host` allowlist.
 | `GET /events` | Server-Sent Events: `board` (full snapshot on connect and after lag), `delta` (one session changed), `event` (`{ "type": "event", "kind", "sessionId", ...payload }`, where `kind` is one of `tokens {amount}`, `turn_end {turns}`, `compacted {preTokens, postTokens}`, `launched`, `status {status}`, `removed`). The UI animates on these: bumper hit, drop target, BALL SAVED, plunger, TILT / GAME OVER |
 | `GET /assets/*` | CSS, JS, SVG embedded in the binary, content-hashed names, `Cache-Control: immutable` |
 | `GET /healthz` | `ok`, for the container healthcheck |
+| `GET /setup`, `GET /api/setup` | only under `setup --web`: the setup page and its polled view model (§14) |
 
 On the wire a session is camelCase JSON: `id`, `kind`, `project`, `title`,
 `model`, `status`, `context { used, limit | null }`,
@@ -404,6 +407,7 @@ Read once by `Config::from_lookup`, as today. New variables:
 | `AGENT_PINBALL_CURSOR_ROOT` | platform Cursor dir (`~/Library/Application Support/Cursor` on macOS) | Cursor app state; `~/.cursor` is derived next to `HOME` |
 | `AGENT_PINBALL_POLL_MS` | `1000` | fallback tick |
 | `AGENT_PINBALL_STUCK_AFTER_SECS` | `300` | `stuck` threshold |
+| `AGENT_PINBALL_STATE_DIR` | `$HOME/.local/state/agent-pinball` | agent-pinball's own state; hook events spool to `hooks/<kind>.jsonl` |
 
 `HOME` is read through the same lookup, so tests never see the real one. A root
 that does not exist disables that collector with one log line; it is not an
@@ -458,9 +462,46 @@ Candidate crates (checked by `cargo deny` before adding):
 
 | Milestone | Scope | Done when |
 |---|---|---|
+| **M0** setup | `pinball-setup`, `setup` / `setup --web` / `setup --agent`, `hook` receiver (§14) | hooks install and remove cleanly in a temp home; setup page passes browser QA |
 | **M1** core types | `Session`, `SessionId`, `TokenUsage`, `ContextGauge`, `Status`, `compute_status`, `Sanitized` | status table and sanitizer tests pass |
 | **M2** Claude collector | `pinball-collectors` with `discover` and `claude` | fixtures parse; live sessions listed by a CLI subcommand |
 | **M3** Codex collector | `codex` module, normalized usage | fixtures parse; app-server hosts map to many sessions |
 | **M4** web and playfield | axum, `pinball-store` Board, routes of §8, the UI from [COMPONENTS.md](design/COMPONENTS.md) | SSE contract and adversarial tests pass |
 | **M5** Cursor collector | read-only `state.vscdb`, transcripts | WAL test passes; coins show "—" |
 | **M6** history | SQLite single-writer history in `pinball-store` | sparklines survive a restart |
+
+---
+
+## 14. Setup and hooks
+
+`agent-pinball setup` finds the agents and installs agent-pinball's hook
+entries in their configs ([ADR 0006](adr/0006-setup-writes-agent-hooks-from-the-cli-only.md)).
+It has three faces over one core in `pinball-setup`:
+
+| Command | Does |
+|---|---|
+| `setup` | prints what it found and the diff, asks `y/N`, writes with a backup |
+| `setup --web [--bind ADDR]` | the same, plus a live page at `/setup` drawn with the design system; the page only shows, the terminal asks |
+| `setup --agent` | Markdown brief and JSON report for another coding agent; writes nothing |
+| `setup --yes [--only K,K]` / `setup --remove` | apply without asking / take the entries out |
+
+| Agent | File | Events hooked |
+|---|---|---|
+| Claude Code | `<claude root>/settings.json` | `SessionStart`, `Stop`, `SessionEnd`, `PreCompact` |
+| Codex | `<codex root>/hooks.json` | the same names; the user trusts them with `/hooks` in Codex |
+| Cursor | `$HOME/.cursor/hooks.json` (`version: 1`) | `sessionStart`, `stop`, `sessionEnd`, `preCompact` |
+
+Only the terminal shows the full diff of an agent's config. The setup page
+and the `--agent` brief list just agent-pinball's own entries that would be
+added or removed, because an agent config can hold secrets (`env` keys,
+tokens in other hooks) and the brief is meant to be pasted elsewhere.
+
+Prompt-carrying events (`UserPromptSubmit`, `beforeSubmitPrompt`) are never
+hooked. Each entry runs `'<binary>' hook --state-dir '<dir>' <kind> <event>`,
+which reads at most 64 KiB of the payload for 2 s, keeps only the session id
+(when it is id-shaped) and the working directory's last component, appends a
+record to `<state dir>/hooks/<kind>.jsonl` (rotated past 1 MiB), prints
+nothing and exits 0. New entries are appended after the user's own, because
+Codex keys its trust records by position. The collectors (M2+) will read the
+spool for exact turn boundaries; until then the setup page shows each agent's
+last event as proof the hook fires.
