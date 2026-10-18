@@ -46,9 +46,23 @@ pub fn read_payload(input: impl Read + Send + 'static, deadline: Duration) -> Ve
 
 /// Builds the record for one hook call. Malformed payloads still yield a
 /// record, just without session or project.
+///
+/// `None` when the payload came from Cursor but the hook was installed for
+/// another agent: Cursor also runs Claude Code's hooks from
+/// `~/.claude/settings.json` (its payloads carry `cursor_version`), and its
+/// own hook already records the event, so keeping it would log a Cursor
+/// session twice, once as Claude.
 #[must_use]
-pub fn record(kind: AgentKind, event: HookEventKind, payload: &[u8], at_ms: u64) -> HookRecord {
+pub fn record(
+    kind: AgentKind,
+    event: HookEventKind,
+    payload: &[u8],
+    at_ms: u64,
+) -> Option<HookRecord> {
     let value: Value = serde_json::from_slice(payload).unwrap_or(Value::Null);
+    if kind != AgentKind::Cursor && value.get("cursor_version").is_some() {
+        return None;
+    }
     let session_id = ["session_id", "conversation_id"]
         .into_iter()
         .find_map(|key| value.get(key)?.as_str())
@@ -63,13 +77,13 @@ pub fn record(kind: AgentKind, event: HookEventKind, payload: &[u8], at_ms: u64)
         .and_then(|name| name.to_str())
         .map(clean_label)
         .filter(|name| !name.is_empty());
-    HookRecord {
+    Some(HookRecord {
         kind,
         event,
         session_id,
         project,
         at_ms,
-    }
+    })
 }
 
 /// Provider ids are UUIDs or similar; anything else is dropped, not cleaned.
@@ -142,7 +156,7 @@ mod tests {
         let payload = br#"{"session_id":"9f1c-22","cwd":"/Users/x/dev/agent-pinball",
             "hook_event_name":"Stop","last_assistant_message":"sk-ant-FAKE0123456789",
             "transcript_path":"/Users/x/.claude/projects/a.jsonl"}"#;
-        let record = record(AgentKind::Claude, HookEventKind::Stop, payload, 5);
+        let record = record(AgentKind::Claude, HookEventKind::Stop, payload, 5).unwrap();
         assert_eq!(record.session_id.as_deref(), Some("9f1c-22"));
         assert_eq!(record.project.as_deref(), Some("agent-pinball"));
         let stored = serde_json::to_string(&record).unwrap();
@@ -154,7 +168,7 @@ mod tests {
     fn cursor_payload_uses_conversation_and_workspace() {
         let payload = br#"{"conversation_id":"c-1","workspace_roots":["/w/api"],
             "user_email":"someone@example.com"}"#;
-        let record = record(AgentKind::Cursor, HookEventKind::SessionStart, payload, 1);
+        let record = record(AgentKind::Cursor, HookEventKind::SessionStart, payload, 1).unwrap();
         assert_eq!(record.session_id.as_deref(), Some("c-1"));
         assert_eq!(record.project.as_deref(), Some("api"));
         assert!(
@@ -164,6 +178,52 @@ mod tests {
         );
     }
 
+    /// Shape of a real Cursor 3.25 `sessionEnd` payload, anonymized, as
+    /// Cursor sends it to both its own hooks and Claude Code's.
+    const CURSOR_SESSION_END: &[u8] =
+        br#"{"conversation_id":"6ea6d1a9-0000-4b0b-bfa2-d68c5d17053c",
+        "generation_id":"","model":"unknown","reason":"window_close","duration_ms":0,
+        "is_background_agent":false,"final_status":"unknown",
+        "session_id":"6ea6d1a9-0000-4b0b-bfa2-d68c5d17053c","hook_event_name":"sessionEnd",
+        "cursor_version":"3.25.9","workspace_roots":["/w/estudio"],
+        "user_email":"someone@example.com","transcript_path":null}"#;
+
+    // Cursor runs Claude Code's hooks too; its event must be recorded once,
+    // as Cursor, never as a Claude session.
+    #[test]
+    fn cursor_payload_through_a_claude_hook_is_skipped() {
+        assert_eq!(
+            record(
+                AgentKind::Claude,
+                HookEventKind::SessionEnd,
+                CURSOR_SESSION_END,
+                1
+            ),
+            None
+        );
+        assert_eq!(
+            record(
+                AgentKind::Codex,
+                HookEventKind::SessionEnd,
+                CURSOR_SESSION_END,
+                1
+            ),
+            None
+        );
+        let own = record(
+            AgentKind::Cursor,
+            HookEventKind::SessionEnd,
+            CURSOR_SESSION_END,
+            1,
+        )
+        .unwrap();
+        assert_eq!(own.kind, AgentKind::Cursor);
+        assert_eq!(own.project.as_deref(), Some("estudio"));
+        // Control: Claude Code's own payload has no cursor_version.
+        let claude = br#"{"session_id":"s-1","cwd":"/w/api","hook_event_name":"SessionEnd"}"#;
+        assert!(record(AgentKind::Claude, HookEventKind::SessionEnd, claude, 1).is_some());
+    }
+
     // Adversarial: ids and directory names come from the agent's environment.
     #[test]
     fn hostile_fields_are_dropped_or_cleaned() {
@@ -171,7 +231,7 @@ mod tests {
         let payload = format!(
             r#"{{"session_id":"<script>alert(1)</script>","cwd":"/w/evil\\u202Egnp.exe\u0007{long}"}}"#
         );
-        let record = record(AgentKind::Codex, HookEventKind::Stop, payload.as_bytes(), 1);
+        let record = record(AgentKind::Codex, HookEventKind::Stop, payload.as_bytes(), 1).unwrap();
         assert_eq!(record.session_id, None);
         let project = record.project.unwrap();
         assert!(!project.contains('\u{202E}') && !project.contains('\u{7}'));
@@ -181,7 +241,7 @@ mod tests {
     #[test]
     fn malformed_payload_still_records_the_event() {
         for payload in [&b""[..], b"\xff\xfe", b"{\"session_id\":", b"[]"] {
-            let record = record(AgentKind::Claude, HookEventKind::SessionEnd, payload, 3);
+            let record = record(AgentKind::Claude, HookEventKind::SessionEnd, payload, 3).unwrap();
             assert_eq!(record.event, HookEventKind::SessionEnd);
             assert_eq!(record.session_id, None);
         }
@@ -214,7 +274,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(last_event(dir.path(), AgentKind::Codex), None);
         for at_ms in [1, 2, 3] {
-            let record = record(AgentKind::Codex, HookEventKind::Stop, b"{}", at_ms);
+            let record = record(AgentKind::Codex, HookEventKind::Stop, b"{}", at_ms).unwrap();
             append(dir.path(), &record).unwrap();
         }
         assert_eq!(last_event(dir.path(), AgentKind::Codex).unwrap().at_ms, 3);
@@ -231,7 +291,7 @@ mod tests {
             vec![b'\n'; usize::try_from(MAX_SPOOL_BYTES).unwrap() + 1],
         )
         .unwrap();
-        let record = record(AgentKind::Claude, HookEventKind::Stop, b"{}", 9);
+        let record = record(AgentKind::Claude, HookEventKind::Stop, b"{}", 9).unwrap();
         append(dir.path(), &record).unwrap();
         assert!(fs::metadata(&path).unwrap().len() < 200);
         assert!(path.with_extension("1.jsonl").exists());

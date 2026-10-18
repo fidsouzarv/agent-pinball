@@ -501,7 +501,10 @@ hooked. Each entry runs `'<binary>' hook --state-dir '<dir>' <kind> <event>`,
 which reads at most 64 KiB of the payload for 2 s, keeps only the session id
 (when it is id-shaped) and the working directory's last component, appends a
 record to `<state dir>/hooks/<kind>.jsonl` (rotated past 1 MiB), prints
-nothing and exits 0. New entries are appended after the user's own, because
+nothing and exits 0. Cursor also runs Claude Code's hooks from
+`~/.claude/settings.json`; a payload carrying `cursor_version` that arrives
+through a non-Cursor hook is dropped, since Cursor's own hook records it.
+New entries are appended after the user's own, because
 Codex keys its trust records by position. The collectors (M2+) will read the
 spool for exact turn boundaries; until then the setup page shows each agent's
 last event as proof the hook fires.
