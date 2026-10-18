@@ -59,7 +59,9 @@ fn now_ms() -> u64 {
 /// agents read a hook's stdout and exit code (ADR 0006).
 fn hook(state_dir: &Path, kind: AgentKind, event: HookEventKind) {
     let payload = spool::read_payload(io::stdin(), spool::PAYLOAD_DEADLINE);
-    let record = spool::record(kind, event, &payload, now_ms());
+    let Some(record) = spool::record(kind, event, &payload, now_ms()) else {
+        return;
+    };
     if let Err(err) = spool::append(state_dir, &record) {
         eprintln!("agent-pinball: cannot record hook event: {err}");
     }
