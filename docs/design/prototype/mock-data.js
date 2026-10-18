@@ -7,6 +7,9 @@
  *   { type: "delta", session: Session }           whenever a session changes
  *   { type: "event", kind, sessionId, ... }       moments worth animating
  * so pinball.js can later swap this file for an EventSource unchanged.
+ *
+ * Paths, session ids and links below are fake. The real server builds every
+ * link itself and percent-encodes each path segment.
  */
 (function () {
   "use strict";
@@ -25,6 +28,36 @@
       out.push(Math.round(v));
     }
     return out;
+  }
+
+  var WAITING_REASONS = ["approval", "approval", "question", "idle_prompt"];
+  var HOME = "/Users/dev/src/";
+
+  function shellQuote(text) {
+    return "'" + text.replace(/'/g, "'\\''") + "'";
+  }
+
+  // What the server sends in session.links: the editor for Claude and Codex
+  // comes from config (vscode here), Cursor always opens in Cursor, only
+  // Codex has an app link, Cursor has no resume command.
+  function linksFor(s) {
+    var dir = HOME + s.project;
+    var thread = s.id.replace(/^[a-z]+-/, "") + "-0000-4000-8000-00000000fake";
+    var editor = s.kind === "cursor" ? "cursor" : "vscode";
+    return {
+      editor: { app: editor, href: editor + "://file" + dir },
+      resume: s.kind === "cursor" ? null : {
+        command: "cd " + shellQuote(dir) + " && " + (s.kind === "claude" ? "claude --resume " : "codex resume ") + thread
+      },
+      app: s.kind === "codex" ? { label: "Open in Codex app", href: "codex://threads/" + thread } : null
+    };
+  }
+
+  function withWaiting(s) {
+    s.waitingSince = s.status === "waiting" ? s.waitingSince : null;
+    s.waitingReason = s.status === "waiting" ? s.waitingReason : null;
+    s.links = linksFor(s);
+    return s;
   }
 
   // Coins are raw tokens. Cursor does not record them locally, hence null.
@@ -65,6 +98,25 @@
       startedAt: NOW - 3 * 60 * MIN,
       lastActivityAt: NOW - 6 * MIN,
       history: history(22000, 980000, 24, 15)
+    },
+    {
+      id: "claude-3c4d",
+      kind: "claude",
+      project: "pinball-hooks",
+      title: "awaiting-input hook receiver",
+      model: "claude-opus-5-5",
+      status: "waiting",
+      waitingSince: NOW - 40000,
+      waitingReason: "approval",
+      context: { used: 233000, limit: 1000000 },
+      coins: { input: 610400, output: 40210, cacheRead: 2210300, cacheWrite: 190020 },
+      turns: 15,
+      compactions: 0,
+      subagents: [],
+      pid: 52044,
+      startedAt: NOW - 28 * MIN,
+      lastActivityAt: NOW - 41000,
+      history: history(16000, 233000, 24)
     },
     {
       id: "claude-9e02",
@@ -168,7 +220,7 @@
       lastActivityAt: NOW - 25 * MIN,
       history: history(6000, 64000, 24)
     }
-  ];
+  ].map(withWaiting);
 
   var NEW_PROJECTS = [
     { kind: "claude", project: "playground", model: "claude-opus-5-5", limit: 1000000 },
@@ -244,9 +296,11 @@
       emit({ type: "event", kind: "turn_end", sessionId: s.id, turns: s.turns });
     }
 
-    function changeStatus(s, status) {
+    function changeStatus(s, status, reason) {
       s.status = status;
-      s.lastActivityAt = Date.now();
+      s.waitingSince = status === "waiting" ? Date.now() : null;
+      s.waitingReason = status === "waiting" ? reason : null;
+      if (status !== "waiting") s.lastActivityAt = Date.now();
       emit({ type: "delta", session: clone(s) });
       emit({ type: "event", kind: "status", sessionId: s.id, status: status });
     }
@@ -271,9 +325,23 @@
         lastActivityAt: Date.now(),
         history: [Math.round(tpl.limit * 0.02)]
       };
+      withWaiting(s);
       state.push(s);
       emit({ type: "event", kind: "launched", sessionId: s.id });
       emit({ type: "delta", session: clone(s) });
+      return s;
+    }
+
+    // Cursor has no waiting signal yet, so the demo only parks Claude and Codex.
+    function wait(target, reason) {
+      var s = target;
+      if (!s) {
+        var candidates = state.filter(function (x) { return x.status === "running" && x.kind !== "cursor"; });
+        if (!candidates.length) return null;
+        s = pick(candidates);
+      }
+      if (s.kind === "cursor") return null;
+      changeStatus(s, "waiting", reason || pick(WAITING_REASONS));
       return s;
     }
 
@@ -296,8 +364,12 @@
       } else if (running.length && roll < 0.76) {
         finishTurn(pick(running));
       } else if (roll < 0.84) {
-        var idle = state.filter(function (s) { return s.status === "idle" || s.status === "stuck"; });
+        var idle = state.filter(function (s) {
+          return s.status === "idle" || s.status === "stuck" || s.status === "waiting";
+        });
         if (idle.length) changeStatus(pick(idle), "running");
+      } else if (roll < 0.87 && running.length > 2) {
+        wait(pick(running));
       } else if (roll < 0.9 && running.length > 2) {
         changeStatus(pick(running), pick(["idle", "idle", "stuck", "error"]));
       } else if (roll < 0.93) {
@@ -329,6 +401,10 @@
         return timer !== null;
       },
       launch: launch,
+      wait: function () {
+        // A button press should be heard, so pick a reason that chimes.
+        return wait(null, pick(["approval", "question"]));
+      },
       find: find
     };
   }

@@ -13,7 +13,22 @@
 
   const KINDS = ["claude", "codex", "cursor"];
   const KIND_LABEL = { claude: "Claude", codex: "Codex", cursor: "Cursor" };
-  const STATUS_LABEL = { running: "Running", idle: "Idle", stuck: "Stuck", error: "Error", ended: "Ended" };
+  const STATUS_LABEL = { running: "Running", waiting: "Waiting", idle: "Idle", stuck: "Stuck", error: "Error", ended: "Ended" };
+  const REASON_LABEL = { approval: "approval", question: "question", idle_prompt: "next prompt" };
+  const REASON_FOR = { approval: "for approval", question: "for an answer", idle_prompt: "for a prompt" };
+  const REASON_SENTENCE = {
+    approval: "is waiting for your approval",
+    question: "has a question for you",
+    idle_prompt: "is waiting for your next prompt"
+  };
+  const EDITOR_LABEL = { vscode: "VS Code", cursor: "Cursor" };
+  // The server builds every link; the client still refuses anything outside
+  // these prefixes before it becomes an href.
+  const LINK_PREFIXES = {
+    editor: ["vscode://file/", "cursor://file/"],
+    app: ["codex://threads/"]
+  };
+  const CHIME_GAP_MS = 2000;
   const REEL_DIGITS = 9;
   const TARGETS = 5;
   const RATE_WINDOW_MS = 60000;
@@ -68,6 +83,17 @@
   function uptime(ms) {
     const m = Math.round(ms / 60000);
     return m < 60 ? m + " min" : Math.floor(m / 60) + " h " + (m % 60) + " min";
+  }
+
+  function statusText(s) {
+    const reason = s.status === "waiting" && REASON_FOR[s.waitingReason];
+    return STATUS_LABEL[s.status] + (reason ? " " + reason : "");
+  }
+
+  // Printable ASCII only, and one of the allowlisted prefixes.
+  function safeHref(kind, href) {
+    if (typeof href !== "string" || !/^[\x21-\x7e]+$/.test(href)) return null;
+    return LINK_PREFIXES[kind].some((prefix) => href.startsWith(prefix)) ? href : null;
   }
 
   // Restart a CSS animation that is driven by a class.
@@ -171,6 +197,14 @@
     '<rect x="6" y="100" width="28" height="18" rx="6" fill="#d22" stroke="#000" stroke-width="2"/></g>' +
     "</svg></button></div>";
 
+  // Sits after .bumper-hit and above it; never inside the button.
+  const ACTIONS =
+    '<div class="bumper-actions" hidden>' +
+    '<a class="action" data-link="editor" hidden></a>' +
+    '<button class="action" type="button" data-link="resume" hidden>Copy resume command</button>' +
+    '<a class="action" data-link="app" hidden></a>' +
+    "</div>";
+
   const INSERT = '<span class="insert"><span class="insert-lamp"></span><span class="insert-text"></span></span>';
 
   function reelsMarkup() {
@@ -203,14 +237,16 @@
     "</svg>" +
     '<h3 class="bumper-name"></h3>' +
     '<div class="bumper-sub"><span class="chip model"></span>' + INSERT + "</div>" +
-    '<div class="ctx-line"><span class="ctx-of"></span><span class="tilt-warning">TILT WARNING</span></div>' +
+    '<div class="ctx-line"><span class="ctx-of"></span><span class="tilt-warning">TILT WARNING</span><span class="your-shot"></span></div>' +
     '<div class="bumper-foot">' +
     '<div><div class="coins-label">Coins</div>' + reelsMarkup() + "</div>" +
     '<div class="foot-right">' + targetsMarkup() + '<span class="extra-balls" role="img"></span><span class="rate"></span></div>' +
     "</div>" +
+    '<div class="waiting-glow" aria-hidden="true"></div>' +
     '<div class="overlay overlay-tilt" aria-hidden="true">TILT</div>' +
     '<div class="overlay overlay-over" aria-hidden="true">GAME OVER</div>' +
-    '<button class="bumper-hit" type="button"></button>';
+    '<button class="bumper-hit" type="button"></button>' +
+    ACTIONS;
 
   const RAMP_D = "M30 150 C150 150 210 40 330 52 S520 140 570 30";
 
@@ -234,6 +270,8 @@
     '<button class="bg-close" type="button" aria-label="Close details">&times;</button>' +
     "</header>" +
     '<div class="bg-body">' +
+    '<section class="bg-actions"><h3 class="section-label">Jump to the session</h3>' + ACTIONS +
+    '<code class="resume-cmd" hidden></code></section>' +
     '<section><h3 class="section-label">Context ramp</h3>' + RAMP + '<p class="note bg-ctx"></p></section>' +
     '<section><h3 class="section-label">Context over time</h3>' +
     '<svg class="spark" viewBox="0 0 300 96" preserveAspectRatio="none" aria-hidden="true">' +
@@ -294,6 +332,63 @@
   function setInsert(el, status) {
     el.dataset.status = status;
     $(el, ".insert-text").textContent = STATUS_LABEL[status];
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Fills an action strip from session.links. Missing or refused links hide
+  // their control; the strip hides when nothing is left.
+  function setActions(el, s, onCopyFailed) {
+    const links = s.links || {};
+    const editor = links.editor && EDITOR_LABEL[links.editor.app] ? links.editor : null;
+    const editorHref = editor && safeHref("editor", editor.href);
+    const appHref = links.app && safeHref("app", links.app.href);
+    const command = links.resume && typeof links.resume.command === "string" ? links.resume.command : null;
+
+    const editorEl = $(el, '[data-link="editor"]');
+    editorEl.hidden = !editorHref;
+    if (editorHref) {
+      editorEl.href = editorHref;
+      editorEl.textContent = "Open in " + EDITOR_LABEL[editor.app];
+      editorEl.setAttribute("aria-label", "Open " + s.project + " in " + EDITOR_LABEL[editor.app]);
+    } else {
+      editorEl.removeAttribute("href");
+    }
+
+    const appEl = $(el, '[data-link="app"]');
+    appEl.hidden = !appHref;
+    if (appHref) {
+      appEl.href = appHref;
+      appEl.textContent = typeof links.app.label === "string" ? links.app.label : "Open app";
+      appEl.setAttribute("aria-label", appEl.textContent + ": " + s.project);
+    } else {
+      appEl.removeAttribute("href");
+    }
+
+    const resumeEl = $(el, '[data-link="resume"]');
+    resumeEl.hidden = command === null;
+    resumeEl.setAttribute("aria-label", "Copy resume command for " + s.project);
+    if (!resumeEl.dataset.wired) {
+      resumeEl.dataset.wired = "";
+      resumeEl.addEventListener("click", async () => {
+        const ok = await copyText(resumeEl.dataset.command);
+        resumeEl.textContent = ok ? "Copied" : "Copy failed";
+        if (!ok && onCopyFailed) onCopyFailed();
+        window.setTimeout(() => {
+          resumeEl.textContent = "Copy resume command";
+        }, 2000);
+      });
+    }
+    if (command !== null) resumeEl.dataset.command = command;
+
+    el.hidden = !editorHref && !appHref && command === null;
   }
 
   // A bank of five drop targets: one falls per finished turn, then resets.
@@ -367,15 +462,18 @@
     $(el, ".bumper-name").textContent = s.project;
     $(el, ".model").textContent = shortModel(s.model);
     $(el, ".ctx-of").textContent = compact(s.context.used) + " / " + (s.context.limit ? compact(s.context.limit) : "??");
+    const reason = REASON_LABEL[s.waitingReason];
+    $(el, ".your-shot").textContent = "YOUR SHOT" + (reason ? " / " + reason : "");
     setInsert($(el, ".insert"), s.status);
     setReels($(el, ".reels"), totalCoins(s.coins));
     setTargets($(el, ".targets"), s.turns);
     setExtraBalls($(el, ".extra-balls"), s.subagents);
     $(el, ".bumper-hit").setAttribute(
       "aria-label",
-      s.project + ", " + KIND_LABEL[s.kind] + ", " + STATUS_LABEL[s.status] + ", context " +
+      s.project + ", " + KIND_LABEL[s.kind] + ", " + statusText(s) + ", context " +
         (pct === null ? "unknown" : Math.round(pct) + " percent") + ". Open details"
     );
+    setActions($(el, ".bumper-actions"), s, () => el.dispatchEvent(new CustomEvent("copyfailed")));
   }
 
   function setRate(el, s, rate) {
@@ -505,6 +603,79 @@
     };
   }
 
+  /* -------------------------------------------------------------- sound */
+
+  /*
+   * The waiting chime: two short oscillator tones, so there is no audio file
+   * and no CSP media-src. Browsers only start audio after a user gesture, so
+   * the coin-door toggle (or the first click or key press on the page, when
+   * sound was left on) creates and resumes the one AudioContext.
+   */
+  function createSound(button) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    let ctx = null;
+    let last = 0;
+    let wanted = remember("pinball.sound") === "on";
+
+    const running = () => ctx !== null && ctx.state === "running";
+
+    function render() {
+      if (!button) return;
+      button.setAttribute("aria-pressed", String(wanted));
+      button.dataset.armed = String(!wanted || running());
+      button.textContent = wanted && !running() ? "Arm sound" : "Sound";
+    }
+
+    function arm() {
+      if (!Ctx) return;
+      if (!ctx) ctx = new Ctx();
+      if (ctx.state !== "running") ctx.resume().then(render, render);
+      render();
+    }
+
+    function tone(freq, at) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.2, at + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.18);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(at);
+      osc.stop(at + 0.2);
+    }
+
+    if (button) {
+      button.addEventListener("click", () => {
+        // Stored on but not yet armed: this click arms it, it does not turn it off.
+        wanted = !(wanted && running());
+        remember("pinball.sound", wanted ? "on" : "off");
+        if (wanted) arm();
+        render();
+      });
+    }
+    const armOnGesture = () => {
+      if (wanted && !running()) arm();
+    };
+    document.addEventListener("pointerdown", armOnGesture);
+    document.addEventListener("keydown", armOnGesture);
+    render();
+
+    return {
+      // Returns whether a chime actually played.
+      chime() {
+        const now = Date.now();
+        if (!wanted || !running() || now - last < CHIME_GAP_MS) return false;
+        last = now;
+        const t = ctx.currentTime;
+        tone(880, t);
+        tone(1318.5, t + 0.15);
+        return true;
+      }
+    };
+  }
+
   /* ---------------------------------------------------- live announcer */
 
   // Screen readers hear status changes, not every token burst.
@@ -581,6 +752,15 @@
     function render(s) {
       const pct = contextPct(s);
       dlg.dataset.kind = s.kind;
+      dlg.dataset.status = s.status;
+      const cmd = $(dlg, ".resume-cmd");
+      const strip = $(dlg, ".bumper-actions");
+      // The command is shown here in full so it can be selected by hand
+      // when the clipboard is refused.
+      setActions(strip, s, () => getSelection().selectAllChildren(cmd));
+      cmd.textContent = s.links && s.links.resume ? s.links.resume.command : "";
+      cmd.hidden = !cmd.textContent;
+      $(dlg, ".bg-actions").hidden = strip.hidden;
       $(dlg, ".bg-kicker").textContent = KIND_LABEL[s.kind] + " / " + s.model;
       $(dlg, ".bg-title").textContent = s.project;
       $(dlg, ".bg-session").textContent = s.title;
@@ -592,7 +772,7 @@
       setReels($(dlg, ".reels"), totalCoins(s.coins));
       drawBreakdown(s);
       stat("model", s.model);
-      stat("status", STATUS_LABEL[s.status]);
+      stat("status", statusText(s));
       stat("turns", s.turns);
       stat("compactions", s.compactions);
       stat("subagents", s.subagents.length);
@@ -602,10 +782,11 @@
     }
 
     return {
-      open(s) {
+      open(s, selectCommand) {
         openId = s.id;
         if (!dlg.open) dlg.showModal();
         render(s);
+        if (selectCommand) getSelection().selectAllChildren($(dlg, ".resume-cmd"));
       },
       update(s) {
         if (openId === s.id) render(s);
@@ -615,7 +796,8 @@
 
   /* --------------------------------------------------------------- board */
 
-  function createBoard(root) {
+  function createBoard(root, options) {
+    const opts = options || {};
     const items = new Map();
     const lanes = {};
     KINDS.forEach((k) => {
@@ -626,6 +808,8 @@
     const announce = createAnnouncer(document.getElementById("announcer"));
     const drawer = createDrawer();
     const entering = new Set();
+    const sound = opts.sound || { chime: () => false };
+    const baseTitle = document.title;
     let totalsQueued = false;
 
     function rate(item) {
@@ -642,7 +826,8 @@
       let item = items.get(s.id);
       if (!item) {
         const el = createBumper(s);
-        el.addEventListener("click", () => drawer.open(items.get(s.id).s));
+        $(el, ".bumper-hit").addEventListener("click", () => drawer.open(items.get(s.id).s));
+        el.addEventListener("copyfailed", () => drawer.open(items.get(s.id).s, true));
         item = { s, el, samples: [] };
         items.set(s.id, item);
         if (delay !== null) {
@@ -651,9 +836,12 @@
           el.addEventListener("animationend", () => el.classList.remove("entering"), { once: true });
         }
         $(lanes[s.kind], ".lane-body").append(el);
+        sortLane(s.kind);
       } else {
         const before = level(contextPct(item.s));
+        const wasWaiting = item.s.status === "waiting";
         item.s = s;
+        if (wasWaiting !== (s.status === "waiting")) sortLane(s.kind);
         updateBumper(item.el, s);
         const after = level(contextPct(s));
         if ((before === "ok" || before === "warm") && (after === "hot" || after === "crit")) {
@@ -675,7 +863,30 @@
       queueTotals();
     }
 
+    // Waiting cards go first in their lane; everything else keeps its order.
+    // The DOM is reordered (not CSS order) so tab order matches what is seen.
+    function sortLane(kind) {
+      const body = $(lanes[kind], ".lane-body");
+      const cards = Array.from(body.children);
+      const sorted = cards
+        .filter((c) => c.dataset.status === "waiting")
+        .concat(cards.filter((c) => c.dataset.status !== "waiting"));
+      if (sorted.every((c, i) => c === cards[i])) return;
+      const focused = document.activeElement;
+      body.append(...sorted);
+      if (focused && body.contains(focused) && document.activeElement !== focused) {
+        focused.focus({ preventScroll: true });
+      }
+    }
+
     function queueTotals() {
+      // Not batched into a frame: hidden tabs get no frames, and the title
+      // is what a hidden tab shows.
+      let waiting = 0;
+      items.forEach((i) => {
+        if (i.s.status === "waiting") waiting += 1;
+      });
+      document.title = (waiting ? "(" + waiting + ") WAITING / " : "") + baseTitle;
       if (totalsQueued) return;
       totalsQueued = true;
       requestAnimationFrame(() => {
@@ -767,7 +978,22 @@
       if (status === "ended") dmd.takeover("GAME OVER");
       if (status === "stuck") dmd.say("ball stuck: " + name);
       if (status === "running") dmd.say(name + " back in play");
+      if (status === "waiting") {
+        onWaiting(item);
+        return;
+      }
       announce(name + " is " + STATUS_LABEL[status].toLowerCase());
+    }
+
+    // A status event is a transition, never the first snapshot, so this is
+    // the only place the chime can fire.
+    function onWaiting(item) {
+      const s = item.s;
+      const reason = REASON_SENTENCE[s.waitingReason] ? s.waitingReason : null;
+      dmd.takeover("YOUR SHOT");
+      dmd.say(s.project + " needs you");
+      announce(s.project + " " + (reason ? REASON_SENTENCE[reason] : "is waiting for you"));
+      if (reason !== "idle_prompt" || opts.chimeOnIdle()) sound.chime();
     }
 
     return {
@@ -866,13 +1092,17 @@
 
   function bootTable() {
     const html = document.documentElement;
-    const board = createBoard(document);
+    let chimeOnIdle = remember("pinball.sound.idle") === "on";
+    const sound = createSound($(document, '[data-toggle="sound"]'));
+    const board = createBoard(document, { sound, chimeOnIdle: () => chimeOnIdle });
     const sim = window.PinballMock.createSimulator((msg) => board.apply(msg));
     const state = { paused: false, live: true };
     fitTilt();
 
     function sync() {
-      const shouldRun = !state.paused && state.live && !document.hidden;
+      // The stream stays connected while the tab is hidden, so a background
+      // tab can still chime; the browser already pauses the animations.
+      const shouldRun = !state.paused && state.live;
       if (shouldRun && !sim.running()) sim.start();
       if (!shouldRun && sim.running()) sim.stop();
       $$(document, "[data-live]").forEach((el) => {
@@ -899,6 +1129,14 @@
       html.dataset.view = "flat";
       flatBtn.setAttribute("aria-pressed", "true");
     }
+    const idleBtn = bindToggle("idle-chime", (on) => {
+      chimeOnIdle = on;
+      remember("pinball.sound.idle", on ? "on" : "off");
+    });
+    idleBtn.setAttribute("aria-pressed", String(chimeOnIdle));
+    $(document, '[data-demo-wait]').addEventListener("click", () => {
+      if (state.live) sim.wait();
+    });
     bindToggle("pause", (on) => {
       state.paused = on;
       sync();
@@ -912,7 +1150,6 @@
     board.machine.onPlunge(() => {
       if (state.live) sim.launch();
     });
-    document.addEventListener("visibilitychange", sync);
     document.addEventListener("keydown", (e) => {
       if (e.key === "n" && !e.metaKey && !e.ctrlKey && e.target === document.body) {
         retrigger($(document, ".table"), "nudge");
@@ -929,7 +1166,8 @@
 
     function place(slot, s) {
       const el = createBumper(s);
-      el.addEventListener("click", () => drawer.open(s));
+      $(el, ".bumper-hit").addEventListener("click", () => drawer.open(s));
+      el.addEventListener("copyfailed", () => drawer.open(s, true));
       setRate(el, s, s.coins ? 180000 : null);
       $(document, '[data-demo="' + slot + '"]').append(el);
       demos.set(slot, { el, s });
@@ -937,6 +1175,7 @@
 
     const statuses = {
       running: byId("claude-7f3a"),
+      waiting: byId("claude-3c4d"),
       idle: byId("codex-4d18"),
       stuck: byId("claude-9e02"),
       error: byId("codex-b7c1"),
@@ -954,6 +1193,24 @@
 
     const cursor = byId("cursor-c0de");
     place("kind-cursor", cursor);
+
+    const question = byId("codex-0a55");
+    question.status = "waiting";
+    question.waitingReason = "question";
+    question.waitingSince = Date.now() - 12000;
+    place("action-all", question);
+    const resumeOnly = byId("claude-21bc");
+    resumeOnly.links.editor = null;
+    place("action-resume", resumeOnly);
+    // Hostile hrefs the client must refuse even if the server sent them.
+    const refused = byId("codex-4d18");
+    refused.project = "links refused";
+    refused.links = {
+      editor: { app: "vscode", href: "javascript:alert(1)//vscode://file/x" },
+      resume: null,
+      app: { label: "Open in Codex app", href: "https://example.invalid/codex://threads/x" }
+    };
+    place("action-refused", refused);
     const unknown = byId("cursor-5a1e");
     unknown.status = "running";
     unknown.project = "limit unknown";
@@ -1008,6 +1265,16 @@
     dmd.say("Claude agent-pinball +18,204");
     $(document, '[data-action-dmd="say"]').addEventListener("click", () => dmd.say("Codex api-gateway turn 45"));
     $(document, '[data-action-dmd="takeover"]').addEventListener("click", () => dmd.takeover("BALL SAVED"));
+    $(document, '[data-action-dmd="your-shot"]').addEventListener("click", () => dmd.takeover("YOUR SHOT"));
+
+    const sound = createSound($(document, '[data-toggle="sound"]'));
+    const chimeBtn = $(document, "[data-action-chime]");
+    chimeBtn.addEventListener("click", () => {
+      chimeBtn.textContent = sound.chime() ? "Chimed" : "Silent: arm sound, or wait 2 s";
+      window.setTimeout(() => {
+        chimeBtn.textContent = "Play chime";
+      }, 1500);
+    });
 
     const machine = createMachine(document);
     machine.onPlunge(() => machine.fire());
@@ -1018,6 +1285,7 @@
     });
 
     $(document, '[data-action-drawer]').addEventListener("click", () => drawer.open(byId("claude-21bc")));
+    $(document, '[data-action-drawer-waiting]').addEventListener("click", () => drawer.open(byId("claude-3c4d")));
 
     $$(document, "[data-swatch]").forEach((el) => {
       el.style.setProperty("--sw", "var(" + el.dataset.swatch + ")");

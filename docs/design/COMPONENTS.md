@@ -37,6 +37,7 @@ and the cyan/blue portals of Portal. Each one becomes a client colour.
 | New session | Plunger launch, card drops onto the table |
 | Token burst | Pop-bumper hit with a score popup |
 | Finished turn | A drop target falls |
+| Waiting for the user (approval, question, idle prompt) | Ball held in the kickout hole: YOUR SHOT |
 | Idle | Ball resting in the saucer |
 | Stuck | Ball trapped, rattling |
 | Error | TILT |
@@ -58,7 +59,7 @@ Defined on `:root` in `pinball.css`. The page is always dark: it is a cabinet.
 | Claude | `--claude` `#ff6b3d`, `--claude-2` `#ffc23d` | Lane, caps, targets, banners |
 | Codex | `--codex` `#9b6bff`, `--codex-2` `#ff7a1a` | Same |
 | Cursor | `--cursor` `#2ad4f0`, `--cursor-2` `#2f6bff` | Same |
-| Status | `--st-running`, `--st-idle`, `--st-stuck`, `--st-error`, `--st-ended` | Insert lights |
+| Status | `--st-running`, `--st-waiting`, `--st-idle`, `--st-stuck`, `--st-error`, `--st-ended` | Insert lights, the waiting frame |
 | Context level | `--lv-warm` (60%), `--lv-hot` (80%), `--lv-crit` (95%) | Ring and ramp colour |
 
 Type: `--font-display` (Impact-style condensed, for names and banners),
@@ -145,18 +146,21 @@ whole card is one control through the stretched `.bumper-hit` button, whose
 | Name | Project directory name (sanitized) |
 | Model chip | Short model name |
 | Insert | Status |
+| YOUR SHOT | Shown while waiting, with the reason |
 | `.ctx-of` | `used / limit` in compact units |
 | TILT WARNING | Shown at `data-level` hot or crit |
 | Score reels | Total coins |
 | Drop targets | Turns |
 | Extra balls | Subagents and their status |
 | Rate | Coins per minute over the last 60s |
+| Action strip | `links` (see 16) |
 
 **States**
 
 | `data-status` | Look |
 |---|---|
 | `running` | Ball orbits the ring; insert is a blinking triangle |
+| `waiting` | Ball held at the top of the ring (kickout hole); star insert; magenta frame and YOUR SHOT / reason, all static; the glow behind the ring pulses only when motion is allowed |
 | `idle` | Ball rests at the bottom (saucer); round insert |
 | `stuck` | Ball rattles in place; blinking diamond insert |
 | `error` | Card shakes, striped TILT overlay; X insert |
@@ -178,6 +182,16 @@ whole card is one control through the stretched `.bumper-hit` button, whose
 | `compacted` | BALL SAVED banner |
 | crossing 80% | TILT WARNING banner, once per crossing |
 | `launched` | Card drops in after the plunger fires (`--delay: .55s`) |
+| `status` into `waiting` | DMD takeover YOUR SHOT, `#announcer` sentence by reason, the chime (see 17), `document.title` prefix `(N) WAITING / ` |
+
+**Order:** waiting cards sort first in their lane; the rest keep their
+order. The DOM is reordered, not CSS `order`, so tab order matches what is
+on screen. The server sorts the first render the same way.
+
+The chime only follows a `status` event, which is a transition, so the
+first `board` snapshot and every reconnect snapshot are silent. The title
+prefix is updated outside `requestAnimationFrame`, since hidden tabs get no
+frames and the title is what a hidden tab shows.
 
 **Missing data:** Cursor records no token spend locally, so its reels show
 dashes, the rate reads "coins n/a" and the backglass explains why. A session
@@ -194,7 +208,7 @@ its label. `[data-unavailable]` shows dashes on dark wheels.
 
 `.insert[data-status]`. Lamp plus text label. Shape carries the meaning as
 well as colour, so status never depends on colour alone: triangle (running),
-circle (idle), diamond (stuck), X (error), square (ended).
+star (waiting), circle (idle), diamond (stuck), X (error), square (ended).
 
 ### 8. Drop targets
 
@@ -246,15 +260,66 @@ while open.
   marked where the line drops by 40% or more; dashed line at the limit.
 - Coins reels and a breakdown bar per category (input, cache read, cache
   write, output).
-- Facts: model, status, turns, compactions, subagents, PID, uptime, last
-  activity.
+- Jump to the session: the action strip (16) plus the full resume command
+  in `code.resume-cmd`. Hidden when the session has no links.
+- Facts: model, status (with the waiting reason), turns, compactions,
+  subagents, PID, uptime, last activity.
 
 ### 15. Coin door
 
 `footer.coin-door`. Link state of the event stream: LIVE (green) or
 INSERT COIN (blinking, coin slots flash) while disconnected and reconnecting.
-Holds the view toggles. The prototype adds "Pause demo" and "Drop link" to
-exercise those states.
+Holds the view toggles. The prototype adds "Pause demo", "Drop link" and
+"Ask for input" (forces a waiting transition) to exercise those states.
+
+- **Sound** (`[data-toggle="sound"]`, `aria-pressed`): see 17.
+- **Chime on idle** (`[data-toggle="idle-chime"]`, `aria-pressed`): opts in
+  to chiming for `idle_prompt`, remembered per browser.
+
+### 16. Bumper actions
+
+`.bumper-actions`, in every bumper and in the backglass ("Jump to the
+session"). Navigation and clipboard only; the panel stays read-only.
+
+| Control | Binds | Text |
+|---|---|---|
+| `a[data-link="editor"]` | `links.editor.href` | "Open in VS Code" or "Open in Cursor" |
+| `button[data-link="resume"]` | `links.resume.command` | "Copy resume command" |
+| `a[data-link="app"]` | `links.app.href` | `links.app.label` |
+
+- **Layering:** a sibling of the stretched `.bumper-hit`, after it in the
+  DOM and above it (`z-index: 3`). Never nested inside the button, so each
+  control has its own role, name and focus stop.
+- **Allowlist:** the server builds every link, and the client still refuses
+  any `href` that is not printable ASCII or does not start with
+  `vscode://file/`, `cursor://file/` (editor) or `codex://threads/` (app).
+  A null or refused link hides its control; the strip hides when nothing is
+  left.
+- **Copy:** `navigator.clipboard.writeText`. Button reads "Copied" for 2s.
+  When the clipboard is refused it reads "Copy failed" and the backglass
+  opens with the command selected in `code.resume-cmd`, ready for Ctrl+C.
+- **Names:** each control's `aria-label` includes the project, since every
+  card has the same visible text.
+- **Waiting:** controls take the `--st-waiting` border.
+
+### 17. Sound
+
+The waiting chime is synthesized with Web Audio: two triangle-wave tones
+(880 Hz then 1318.5 Hz), under 400 ms in total. No audio file, so no CSP
+`media-src`.
+
+- **Gesture:** browsers only start audio after a user gesture. The coin-door
+  "Sound" toggle creates and resumes the page's one `AudioContext` in its
+  click handler.
+- **Remembered:** on/off goes through `remember("pinball.sound")`. When it
+  was left on, the door shows ARM SOUND (`data-armed="false"`, blinking)
+  until the next click or key press anywhere on the page arms it. Clicking
+  ARM SOUND arms it; it does not turn sound off.
+- **When:** only on a `status` event into `waiting`, never on a snapshot, at
+  most one chime every 2s. `idle_prompt` is silent unless "Chime on idle"
+  is on; `approval` and `question` always chime.
+- **Hidden tabs:** the stream stays connected, so a background tab still
+  chimes.
 
 ## Data contract
 
@@ -273,6 +338,7 @@ The board consumes exactly three message shapes. The prototype's
 // Moments worth animating. kind is one of:
 // tokens {amount} | turn_end {turns} | compacted {preTokens, postTokens}
 // | launched | status {status} | removed
+// status {status: "waiting"} is the sound trigger; there is no extra kind.
 { "type": "event", "kind": "tokens", "sessionId": "claude-7f3a", "amount": 18204 }
 ```
 
@@ -284,7 +350,9 @@ The board consumes exactly three message shapes. The prototype's
   "project": "agent-pinball",       // sanitized, directory name only
   "title": "system design ...",     // sanitized, truncated
   "model": "claude-opus-5-5",
-  "status": "running",              // running | idle | stuck | error | ended
+  "status": "running",              // running | waiting | idle | stuck | error | ended
+  "waitingSince": null,             // ms epoch while waiting, else null
+  "waitingReason": null,            // approval | question | idle_prompt, or null
   "context": { "used": 412000, "limit": 1000000 },   // limit may be null
   "coins": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }, // or null
   "turns": 38,
@@ -293,9 +361,18 @@ The board consumes exactly three message shapes. The prototype's
   "pid": 48122,                     // null when no live process is known
   "startedAt": 1792270000000,
   "lastActivityAt": 1792275000000,
-  "history": [18000, 52000, 412000] // context samples for the sparkline
+  "history": [18000, 52000, 412000], // context samples for the sparkline
+  "links": {                        // built by the server; each one may be null
+    "editor": { "app": "vscode", "href": "vscode://file/Users/me/src/agent-pinball" },
+    "resume": { "command": "cd '/Users/me/src/agent-pinball' && claude --resume <id>" },
+    "app": { "label": "Open in Codex app", "href": "codex://threads/<id>" }
+  }
 }
 ```
+
+`waitingReason` is an enum only; the panel never receives the prompt or
+message text behind it. `links.editor.app` is `vscode` or `cursor`. Paths
+in `links` are the only place the full project directory appears.
 
 ## Motion budget
 
@@ -303,8 +380,9 @@ The board consumes exactly three message shapes. The prototype's
   gauges.
 - One `requestAnimationFrame` loop each for parallax and the DMD count-up,
   and both stop when they settle.
-- The event stream pauses while the tab is hidden; the next `board` snapshot
-  catches up.
+- The event stream stays connected while the tab is hidden, so a background
+  tab can still chime and update its title; only the animations pause (the
+  browser stops frames and the rAF loops idle).
 - `prefers-reduced-motion: reduce` collapses every animation and transition
   to an instant change, removes tilt and parallax, and keeps every state
   readable: status still shows by insert shape and label, context by the
@@ -316,7 +394,11 @@ The board consumes exactly three message shapes. The prototype's
 - Status uses shape, text and colour together.
 - `#announcer` (`aria-live="polite"`) speaks status changes, compactions,
   TILT WARNING and new sessions, at most one message every 4 seconds. Token
-  bursts are never announced.
+  bursts are never announced. Entering waiting says why: "is waiting for
+  your approval", "has a question for you", "is waiting for your next
+  prompt".
+- Sound is never the only signal: every chime comes with the announcer
+  message, the DMD takeover, the title prefix and the waiting frame.
 - DMD and score windows are real text; decorative SVG is `aria-hidden`.
 - The backglass is a native modal dialog.
 - Works at 375px wide with no horizontal scroll.

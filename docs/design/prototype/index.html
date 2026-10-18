@@ -104,7 +104,8 @@
             <ul class="legend">
               <li><span class="legend-icon ring"></span><span><b>Bumper ring</b> is context used against the model limit.</span></li>
               <li><span class="legend-icon reel"></span><span><b>Score reels</b> are coins: every token billed so far.</span></li>
-              <li><span class="legend-icon insert"></span><span><b>Insert light</b> is status: running, idle, stuck, error, ended.</span></li>
+              <li><span class="legend-icon insert"></span><span><b>Insert light</b> is status: running, waiting, idle, stuck, error, ended.</span></li>
+              <li><span class="legend-icon shot"></span><span><b>YOUR SHOT</b> means the agent waits for you: approve, answer or prompt it.</span></li>
               <li><span class="legend-icon target"></span><span><b>Drop targets</b> fall one per finished turn.</span></li>
               <li><span class="legend-icon ball"></span><span><b>Extra balls</b> are subagents. The main ball spins faster as coins burn faster.</span></li>
               <li><span class="legend-icon warn"></span><span><b>TILT WARNING</b> at 80% context. <b>BALL SAVED</b> means it compacted.</span></li>
@@ -129,9 +130,12 @@
       </div>
       <div class="link-state" data-live="true" role="status">LIVE</div>
       <div class="toggles">
+        <button class="toggle" type="button" data-toggle="sound" aria-pressed="false">Sound</button>
+        <button class="toggle" type="button" data-toggle="idle-chime" aria-pressed="false">Chime on idle</button>
         <button class="toggle" type="button" data-toggle="flat" aria-pressed="false">Flat view</button>
         <button class="toggle" type="button" data-toggle="pause" aria-pressed="false">Pause demo</button>
         <button class="toggle" type="button" data-toggle="unplug" aria-pressed="false">Drop link</button>
+        <button class="toggle" type="button" data-demo-wait>Ask for input</button>
         <a class="toggle" href="catalog.html">Component catalog</a>
       </div>
     </footer>

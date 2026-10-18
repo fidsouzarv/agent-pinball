@@ -34,6 +34,7 @@
         <div class="swatch" data-swatch="--st-stuck"></div>
         <div class="swatch" data-swatch="--st-error"></div>
         <div class="swatch" data-swatch="--st-ended"></div>
+        <div class="swatch" data-swatch="--st-waiting"></div>
         <div class="swatch" data-swatch="--lv-warm"></div>
         <div class="swatch" data-swatch="--lv-hot"></div>
         <div class="swatch" data-swatch="--lv-crit"></div>
@@ -45,7 +46,8 @@
     <section class="catalog-section" aria-labelledby="c-status">
       <h2 id="c-status">Agent bumper: status</h2>
       <p>One card per session. The ball orbits the ring while running, rests in the saucer when idle,
-        rattles when stuck. Error stamps TILT, ended greys out to GAME OVER.</p>
+        rattles when stuck. Error stamps TILT, ended greys out to GAME OVER. Waiting holds the ball in the
+        kickout hole: YOUR SHOT, a star insert and a frame that stays without motion.</p>
       <div class="demo-grid">
         <div class="demo">
           <span class="demo-label">Running</span>
@@ -56,6 +58,7 @@
             <button class="toggle" type="button" data-action="saved" data-for="status-running">Ball saved</button>
           </div>
         </div>
+        <div class="demo"><span class="demo-label">Waiting</span><div data-demo="status-waiting"></div></div>
         <div class="demo"><span class="demo-label">Idle</span><div data-demo="status-idle"></div></div>
         <div class="demo"><span class="demo-label">Stuck</span><div data-demo="status-stuck"></div></div>
         <div class="demo"><span class="demo-label">Error</span><div data-demo="status-error"></div></div>
@@ -91,6 +94,29 @@
       </div>
     </section>
 
+    <section class="catalog-section" aria-labelledby="c-actions">
+      <h2 id="c-actions">Bumper actions</h2>
+      <p>Jump to the session: open the project in the editor, copy the resume command, open the agent's app.
+        Links only, never a write. A control is hidden when its link is null or outside the allowlist
+        (<code>vscode://file/</code>, <code>cursor://file/</code>, <code>codex://threads/</code>); the strip hides when none is left.</p>
+      <div class="demo-grid">
+        <div class="demo"><span class="demo-label">All three links (waiting, question)</span><div data-demo="action-all"></div></div>
+        <div class="demo"><span class="demo-label">Resume command only</span><div data-demo="action-resume"></div></div>
+        <div class="demo"><span class="demo-label">Hostile links refused</span><div data-demo="action-refused"></div></div>
+      </div>
+    </section>
+
+    <section class="catalog-section" aria-labelledby="c-sound">
+      <h2 id="c-sound">Sound</h2>
+      <p>The coin-door toggle. Its click creates the audio context, the gesture browsers require. When it was
+        left on, the door reads ARM SOUND until the next click or key press. The chime is two short tones,
+        at most one every 2 seconds, only on a transition into waiting.</p>
+      <div class="demo-actions">
+        <button class="toggle" type="button" data-toggle="sound" aria-pressed="false">Sound</button>
+        <button class="toggle" type="button" data-action-chime>Play chime</button>
+      </div>
+    </section>
+
     <section class="catalog-section" aria-labelledby="c-parts">
       <h2 id="c-parts">Score reels, insert lights, drop targets</h2>
       <p>Reels roll each digit to its new value with a spring. Inserts pair colour with shape and a label.
@@ -107,6 +133,7 @@
           <span class="demo-label">Insert lights</span>
           <div class="demo-row">
             <span data-demo-insert="running"></span>
+            <span data-demo-insert="waiting"></span>
             <span data-demo-insert="idle"></span>
             <span data-demo-insert="stuck"></span>
             <span data-demo-insert="error"></span>
@@ -148,6 +175,7 @@
       <div class="demo-actions">
         <button class="toggle" type="button" data-action-dmd="say">Ticker message</button>
         <button class="toggle" type="button" data-action-dmd="takeover">Takeover</button>
+        <button class="toggle" type="button" data-action-dmd="your-shot">Your shot</button>
       </div>
     </section>
 
@@ -170,6 +198,7 @@
         and session facts. A native dialog, so focus and Escape behave.</p>
       <div class="demo-actions">
         <button class="toggle" type="button" data-action-drawer>Open backglass</button>
+        <button class="toggle" type="button" data-action-drawer-waiting>Open a waiting session</button>
       </div>
     </section>
   </main>
