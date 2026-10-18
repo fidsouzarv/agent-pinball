@@ -165,7 +165,8 @@ fn hook_command_quotes_paths_with_spaces_and_quotes() {
 #[test]
 fn report_shows_binary_and_last_event() {
     let (home, env) = home();
-    let record = spool::record(AgentKind::Claude, HookEventKind::Stop, b"{}", 77);
+    let record =
+        spool::record(AgentKind::Claude, HookEventKind::Stop, b"{}", 77).expect("claude payload");
     spool::append(&env.state_dir, &record).expect("spool");
     let report = report(&env);
     let claude = agent(&report, AgentKind::Claude);
