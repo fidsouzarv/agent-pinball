@@ -19,13 +19,14 @@ This document sets the project's standards: toolchain, lint, tests, complexity, 
   - `dev.build-override`: `opt-level = 3`, so proc macros and build scripts run faster.
 - The core is Rust-only: the server and the UI build with Cargo alone, with no Node or bundler. The UI is server-rendered, and a page may carry a small vanilla script.
 
-Current crates: `pinball-core`, `pinball-web` and `pinball-cli`. Target layout:
+Current crates: `pinball-core`, `pinball-setup`, `pinball-web` and `pinball-cli`. Target layout:
 
 ```
 crates/
   pinball-core/       # domain types: Agent, AgentKind {Codex, Cursor, Claude}, Session, Status
   pinball-collectors/ # reads each agent's logs/state (one module per provider)
   pinball-store/      # persistence (SQLite, single writer)
+  pinball-setup/      # `setup`: agent detection, hook entries, hook spool
   pinball-web/        # the panel (server-rendered, pinball theme)
   pinball-cli/        # thin binary
   pinball-test-support/
@@ -148,7 +149,7 @@ Rules:
 **Code:**
 - `unsafe_code = "forbid"` across the workspace.
 - **Agent logs contain secrets and user code.** Every piece of text read from Codex, Cursor or Claude goes through a typed sanitizer (`Sanitized<T>`, built only by `sanitize()`) before it is stored or rendered. Nothing raw reaches the panel.
-- The panel is **read-only** toward agents: it does not write their files, send them commands or kill their processes. `disallowed-methods` in the web crate enforces it, and changing that needs auth and confirmation designed first.
+- The panel is **read-only** toward agents: it does not write their files, send them commands or kill their processes. `disallowed-methods` in the web crate enforces it, and changing that needs auth and confirmation designed first. The only exception is `agent-pinball setup`, run by the user in a terminal, which adds or removes agent-pinball's own hook entries after a diff and confirmation (ADR 0006).
 - Agent paths (`~/.codex`, `~/.cursor`, `~/.claude`) come from config with an injectable root, and collectors only read them.
 - Config is read once (`Config::from_lookup`) and passed down. Nothing else reads the environment.
 - I/O is always bounded: the HTTP request head is capped at 8 KB (431 above that), and each connection has a 10s total deadline to send its request, on top of write timeouts.

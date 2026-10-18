@@ -2,3 +2,4 @@
 //! (one test binary per crate). Declare every new file here.
 
 mod server;
+mod setup;

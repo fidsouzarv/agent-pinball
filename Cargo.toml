@@ -4,6 +4,7 @@ resolver = "3"
 # store and test-support join once there is code for them.
 members = [
     "crates/pinball-core",
+    "crates/pinball-setup",
     "crates/pinball-web",
     "crates/pinball-cli",
 ]
@@ -18,7 +19,17 @@ publish = false
 [workspace.dependencies]
 # Inter-crate dependencies.
 pinball-core = { path = "crates/pinball-core", version = "0.1.0" }
+pinball-setup = { path = "crates/pinball-setup", version = "0.1.0" }
 pinball-web = { path = "crates/pinball-web", version = "0.1.0" }
+
+# Runtime.
+clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+maud = "0.27"
+serde = { version = "1.0", features = ["derive"] }
+# preserve_order keeps agent config keys where they were, so setup diffs stay minimal.
+serde_json = { version = "1.0", features = ["preserve_order"] }
+similar = "3.2"
+tempfile = "3.27"
 
 # Testing.
 rstest = "0.26"

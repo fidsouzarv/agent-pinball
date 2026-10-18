@@ -1,9 +1,13 @@
 //! HTTP surface of the agent-pinball panel.
 //!
-//! Std-only while the panel serves nothing but `/healthz`; a framework comes in
-//! with the first real page. Read-only by design: see this crate's
-//! `clippy.toml`.
+//! Std-only: the setup page is server-rendered and polled, so a sequential
+//! loop is enough; axum comes with the live playfield and its SSE stream
+//! (docs/SYSTEM_DESIGN.md §3). Read-only by design: see this crate's
+//! `clippy.toml`. Every route is `GET`.
 
+mod setup_page;
+
+use std::borrow::Cow;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -62,54 +66,86 @@ pub fn check_bind(addr: SocketAddr, in_container: bool) -> Result<BindPosture, B
     }
 }
 
+pub use setup_page::{SetupPage, SetupProvider};
+
+/// Sent on every response. No inline script or style is ever needed, so the
+/// policy can stay this strict (docs/SYSTEM_DESIGN.md §8).
+const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
+     img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; \
+     frame-ancestors 'none'";
+
+const TEXT: &str = "text/plain; charset=utf-8";
+
 /// A response the panel can send.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     /// HTTP status code.
     pub status: u16,
     /// Reason phrase for the status line.
     pub reason: &'static str,
-    /// Plain-text body.
-    pub body: &'static str,
+    /// `Content-Type` header value.
+    pub content_type: &'static str,
+    /// Body.
+    pub body: Cow<'static, str>,
 }
 
-const OK: Response = Response {
-    status: 200,
-    reason: "OK",
-    body: "ok\n",
-};
-const BAD_REQUEST: Response = Response {
-    status: 400,
-    reason: "Bad Request",
-    body: "bad request\n",
-};
-const FORBIDDEN: Response = Response {
-    status: 403,
-    reason: "Forbidden",
-    body: "host not allowed\n",
-};
-const NOT_FOUND: Response = Response {
-    status: 404,
-    reason: "Not Found",
-    body: "not found\n",
-};
-const METHOD_NOT_ALLOWED: Response = Response {
-    status: 405,
-    reason: "Method Not Allowed",
-    body: "method not allowed\n",
-};
-const HEAD_TOO_LARGE: Response = Response {
-    status: 431,
-    reason: "Request Header Fields Too Large",
-    body: "request head too large\n",
-};
+impl Response {
+    const fn text(status: u16, reason: &'static str, body: &'static str) -> Self {
+        Self {
+            status,
+            reason,
+            content_type: TEXT,
+            body: Cow::Borrowed(body),
+        }
+    }
+
+    pub(crate) fn ok(content_type: &'static str, body: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            status: 200,
+            reason: "OK",
+            content_type,
+            body: body.into(),
+        }
+    }
+}
+
+const OK: Response = Response::text(200, "OK", "ok\n");
+const BAD_REQUEST: Response = Response::text(400, "Bad Request", "bad request\n");
+const FORBIDDEN: Response = Response::text(403, "Forbidden", "host not allowed\n");
+const NOT_FOUND: Response = Response::text(404, "Not Found", "not found\n");
+const METHOD_NOT_ALLOWED: Response =
+    Response::text(405, "Method Not Allowed", "method not allowed\n");
+const HEAD_TOO_LARGE: Response = Response::text(
+    431,
+    "Request Header Fields Too Large",
+    "request head too large\n",
+);
+
+/// What the server answers for: the Host allowlist and the pages it has.
+pub struct Site {
+    /// Accepted `Host` header values, without port.
+    pub allowed_hosts: Vec<String>,
+    /// Serves `/setup` and `/api/setup` when present.
+    pub setup: Option<SetupProvider>,
+}
+
+impl Site {
+    /// A site with only `/healthz`.
+    #[must_use]
+    pub fn new(allowed_hosts: Vec<String>) -> Self {
+        Self {
+            allowed_hosts,
+            setup: None,
+        }
+    }
+}
 
 /// Routes one request head. Pure, so the Host guard is testable without a socket.
 ///
 /// The `Host` allowlist runs before routing: it is the DNS-rebinding guard, and
 /// a request without `Host` is refused rather than assumed local.
 #[must_use]
-pub fn route(head: &str, allowed_hosts: &[String]) -> Response {
+pub fn route(head: &str, site: &Site) -> Response {
     let mut lines = head.lines();
     let Some(request_line) = lines.next() else {
         return BAD_REQUEST;
@@ -125,13 +161,35 @@ pub fn route(head: &str, allowed_hosts: &[String]) -> Response {
     let Some(host) = host else {
         return BAD_REQUEST;
     };
-    if !host_allowed(host, allowed_hosts) {
+    if !host_allowed(host, &site.allowed_hosts) {
         return FORBIDDEN;
     }
-    match (method, target) {
-        ("GET", "/healthz") => OK,
-        (_, "/healthz") => METHOD_NOT_ALLOWED,
-        _ => NOT_FOUND,
+    let Some(response) = resource(target, site) else {
+        return NOT_FOUND;
+    };
+    if method == "GET" {
+        response
+    } else {
+        METHOD_NOT_ALLOWED
+    }
+}
+
+/// The response for a path, before the method check. The setup provider is
+/// called only for a `GET`, through the closure, so a refused method costs
+/// nothing.
+fn resource(target: &str, site: &Site) -> Option<Response> {
+    let path = target.split_once('?').map_or(target, |(path, _)| path);
+    if path == "/healthz" {
+        return Some(OK);
+    }
+    if let Some(asset) = setup_page::asset(path) {
+        return Some(asset);
+    }
+    let provider = site.setup.as_ref()?;
+    match path {
+        "/" | "/setup" => Some(setup_page::html(&provider())),
+        "/api/setup" => Some(setup_page::json(&provider())),
+        _ => None,
     }
 }
 
@@ -159,14 +217,14 @@ fn strip_port(host: &str) -> &str {
 /// Serves until the listener fails. One connection at a time: the panel has a
 /// local viewer, and a sequential loop keeps resource use bounded. The
 /// per-connection deadline is what keeps one client from holding the loop.
-pub fn serve(listener: &TcpListener, allowed_hosts: &[String]) -> io::Result<()> {
-    serve_with_deadline(listener, allowed_hosts, CONNECTION_DEADLINE)
+pub fn serve(listener: &TcpListener, site: &Site) -> io::Result<()> {
+    serve_with_deadline(listener, site, CONNECTION_DEADLINE)
 }
 
 /// `serve` with an injectable deadline, so tests need not wait seconds.
 pub(crate) fn serve_with_deadline(
     listener: &TcpListener,
-    allowed_hosts: &[String],
+    site: &Site,
     deadline: Duration,
 ) -> io::Result<()> {
     for stream in listener.incoming() {
@@ -176,7 +234,7 @@ pub(crate) fn serve_with_deadline(
                 stream: &stream,
                 until: Instant::now() + deadline,
             };
-            handle(&stream, &mut reader, allowed_hosts)
+            handle(&stream, &mut reader, site)
         });
         if let Err(err) = result {
             eprintln!("agent-pinball: connection error: {err}");
@@ -208,16 +266,12 @@ impl Read for DeadlineReader<'_> {
     }
 }
 
-fn handle(
-    stream: &TcpStream,
-    reader: &mut DeadlineReader<'_>,
-    allowed_hosts: &[String],
-) -> io::Result<()> {
+fn handle(stream: &TcpStream, reader: &mut DeadlineReader<'_>, site: &Site) -> io::Result<()> {
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     match read_head(&mut *reader)? {
-        Some(head) => write_response(stream, route(&head, allowed_hosts)),
+        Some(head) => write_response(stream, &route(&head, site)),
         None => {
-            write_response(stream, HEAD_TOO_LARGE)?;
+            write_response(stream, &HEAD_TOO_LARGE)?;
             // Closing with unread input makes the kernel send RST, which can
             // discard the 431 before the client reads it. Signal EOF, then
             // discard a bounded amount of what the client is still sending,
@@ -251,16 +305,20 @@ fn read_head(input: impl Read) -> io::Result<Option<String>> {
     Ok(Some(head))
 }
 
-fn write_response(mut stream: &TcpStream, response: Response) -> io::Result<()> {
+fn write_response(mut stream: &TcpStream, response: &Response) -> io::Result<()> {
     write!(
         stream,
         "HTTP/1.1 {} {}\r\n\
-         Content-Type: text/plain; charset=utf-8\r\n\
+         Content-Type: {}\r\n\
          Content-Length: {}\r\n\
+         Content-Security-Policy: {CONTENT_SECURITY_POLICY}\r\n\
          X-Content-Type-Options: nosniff\r\n\
+         Referrer-Policy: no-referrer\r\n\
+         Cache-Control: no-cache\r\n\
          Connection: close\r\n\r\n{}",
         response.status,
         response.reason,
+        response.content_type,
         response.body.len(),
         response.body
     )?;
@@ -297,10 +355,12 @@ mod suite;
 mod tests {
     use super::*;
 
-    fn defaults() -> Vec<String> {
-        ["localhost", "127.0.0.1", "::1"]
-            .map(str::to_owned)
-            .to_vec()
+    fn defaults() -> Site {
+        Site::new(
+            ["localhost", "127.0.0.1", "::1"]
+                .map(str::to_owned)
+                .to_vec(),
+        )
     }
 
     #[test]
