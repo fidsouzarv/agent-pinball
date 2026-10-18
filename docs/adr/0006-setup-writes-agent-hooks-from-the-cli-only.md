@@ -1,7 +1,9 @@
 # 6. Setup writes agent hook config, from the CLI only
 
 Status: Accepted. Narrows [ADR 0001](0001-monitor-only-read-only-panel.md)
-for one command; the panel itself stays read-only.
+for one command; the panel itself stays read-only. Amended by
+[ADR 0007](0007-waiting-status-from-awaiting-input-hooks.md), which adds an
+awaiting-input event under the same rules.
 
 ## Context
 

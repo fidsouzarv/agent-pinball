@@ -40,6 +40,7 @@ and whether it is working, waiting, stuck or broken.
 | **Session** | One conversation with an agent: a Claude transcript, a Codex rollout, a Cursor composer. **The unit of display**: one ball on the playfield is one session. Subagent sessions attach to their parent. |
 | **Turn** | One user request and everything the agent does to answer it, until the agent hands control back. A turn contains one or more model calls. |
 | **Context** | Tokens currently in the model's window over the model's limit, from the last model call: `used / limit`. It rises with each call and drops after compaction. |
+| **Waiting** | The agent is blocked on the user: a permission prompt, a question, or an idle prompt after a finished turn. Known from awaiting-input hooks, not from files (§6, §14). |
 | **Coins** | Raw cumulative tokens across every model call in the session (input, output and cache traffic). Named after the coins a pinball machine takes. No price is attached. |
 
 **Why more context means more coins.** A model call resends the whole
@@ -117,7 +118,12 @@ flowchart LR
   `cursor:<composerId>`), parsed once, used as the URL key.
 - `Session`: id, kind, parent id for subagents, project directory, model,
   `ContextGauge`, cumulative `TokenUsage`, timestamps of the last write and the
-  last turn boundary, open-turn flag, last error, a `Sanitized` title.
+  last turn boundary, open-turn flag, last error, a `Sanitized` title, and
+  `awaiting { since, reason }` from the newest awaiting-input hook record.
+- `ProjectDir`: the absolute working directory, built only by a parser that
+  rejects relative paths, `..`, control and bidi characters and anything over
+  1024 bytes. It feeds only the action links (§8,
+  [ADR 0008](adr/0008-action-links-and-project-paths-on-the-loopback-panel.md)).
 - `TokenUsage { input, output, cache_read, cache_write }`, **normalized** so
   `input` excludes cache traffic for every provider. Codex reports
   `input_tokens` with cached tokens already included (`cached_input_tokens` is
@@ -265,6 +271,8 @@ it is answered, `cursor-agent` processes are discovered but show no session.
 | Errors | `api_error` | not observed yet | `turn_ended` status |
 | Subagents | sidechain files | `parent_thread_id` | `isSubagent` |
 | Title | pid file `name` | not observed | composer header |
+| Waiting for the user | `PermissionRequest`, `Notification` hooks | `PermissionRequest` hook (approval requests are not persisted to rollouts) | **not detected** (no hook) |
+| Link to the session | editor, `claude --resume` | editor, `codex resume`, `codex://threads/<id>` | `cursor://file/` only |
 
 ---
 
@@ -300,12 +308,22 @@ calls it on every delta and on every tick.
 |---|---|
 | `ended` | no live host process and no write for the grace period |
 | `error` | the last turn ended in an error (`api_error`, failed `turn_ended`) and no newer turn has started |
+| `waiting` | the newest awaiting-input record (§14) is newer than any other activity: hook event, transcript or rollout record ([ADR 0007](adr/0007-waiting-status-from-awaiting-input-hooks.md)) |
 | `stuck` | a turn is open and nothing was written for more than `STUCK_AFTER` (default 5 min) |
 | `running` | a turn is open (busy flag, `task_started` without `task_complete`) |
 | `idle` | otherwise: the host is alive and waiting for the user |
 
 `stuck` is a hint, not a verdict: a long tool call (a test suite, a build) is
 legitimately silent. The threshold is configurable (§10).
+
+`waiting` comes before `stuck` because a session parked on a permission
+prompt has an open turn and writes nothing; without that order it would turn
+`stuck` after `STUCK_AFTER`. Its reason is `approval`, `question` or
+`idle_prompt`. Collectors record `awaiting { since, reason }` and
+`last_activity` from record timestamps, never file mtimes, so the `tool_use`
+written just before a prompt is always older than the prompt. Waiting clears on
+the next activity, including the `tool_result` a manual deny writes, which
+fires no hook.
 
 ---
 
@@ -357,7 +375,25 @@ On the wire a session is camelCase JSON: `id`, `kind`, `project`, `title`,
 `model`, `status`, `context { used, limit | null }`,
 `coins { input, output, cacheRead, cacheWrite } | null`, `turns`,
 `compactions`, `subagents [{ id, status }]`, `pid | null`, `startedAt`,
-`lastActivityAt` (epoch ms) and `history` (context samples). Rust types stay
+`lastActivityAt` (epoch ms), `history` (context samples), `waitingSince`
+(epoch ms) and `waitingReason` (`approval`, `question`, `idle_prompt`, both
+null unless `status` is `waiting`), and `links`:
+
+```jsonc
+"links": {
+  "editor": { "app": "vscode", "href": "vscode://file/%2FUsers%2Fme%2Fdev%2Fagent-pinball" },  // or null
+  "resume": { "command": "cd '/Users/me/dev/agent-pinball' && claude --resume 7f3a…" },      // or null
+  "app":    { "label": "Open in Codex app", "href": "codex://threads/…" }                     // or null
+}
+```
+
+The server builds every link from a parsed `ProjectDir` and session id. The
+client checks each `href` against a scheme allowlist (`vscode://file/`,
+`cursor://file/`, `codex://threads/`) before using it
+([ADR 0008](adr/0008-action-links-and-project-paths-on-the-loopback-panel.md)).
+A `status {status: "waiting"}` event is sent once per entry into waiting, and
+the browser chimes on it ([ADR 0007](adr/0007-waiting-status-from-awaiting-input-hooks.md)).
+Rust types stay
 snake_case and serialize with `#[serde(rename_all = "camelCase")]`. The shapes
 are defined in
 [docs/design/COMPONENTS.md#data-contract](design/COMPONENTS.md#data-contract).
@@ -388,6 +424,11 @@ vanilla HTML, CSS, JS and SVG with no bundler
 **What is shown.** v1 shows only: the project directory name (last path
 component), the model id, a sanitized session title, numbers and timestamps.
 **Never prompt or response bodies**, tool output, file contents or argv.
+The absolute project path appears only inside action links (`links.*`, §8),
+which the panel serves on loopback behind the Host allowlist
+([ADR 0008](adr/0008-action-links-and-project-paths-on-the-loopback-panel.md)).
+Awaiting-input hooks keep a reason enum, never the notification message or
+tool input ([ADR 0007](adr/0007-waiting-status-from-awaiting-input-hooks.md)).
 
 **Sanitizer.** `sanitize()` redacts key-shaped substrings (`sk-...`,
 `sk-ant-...`, `ghp_...`, `AKIA...`, bearer tokens, long high-entropy runs),
@@ -407,6 +448,7 @@ Read once by `Config::from_lookup`, as today. New variables:
 | `AGENT_PINBALL_CURSOR_ROOT` | platform Cursor dir (`~/Library/Application Support/Cursor` on macOS) | Cursor app state; `~/.cursor` is derived next to `HOME` |
 | `AGENT_PINBALL_POLL_MS` | `1000` | fallback tick |
 | `AGENT_PINBALL_STUCK_AFTER_SECS` | `300` | `stuck` threshold |
+| `AGENT_PINBALL_EDITOR` | `vscode` | editor link for Claude and Codex sessions: `vscode`, `cursor` or `none`; Cursor sessions always link to `cursor://` |
 | `AGENT_PINBALL_STATE_DIR` | `$HOME/.local/state/agent-pinball` | agent-pinball's own state; hook events spool to `hooks/<kind>.jsonl` |
 
 `HOME` is read through the same lookup, so tests never see the real one. A root
@@ -463,10 +505,10 @@ Candidate crates (checked by `cargo deny` before adding):
 | Milestone | Scope | Done when |
 |---|---|---|
 | **M0** setup | `pinball-setup`, `setup` / `setup --web` / `setup --agent`, `hook` receiver (§14) | hooks install and remove cleanly in a temp home; setup page passes browser QA |
-| **M1** core types | `Session`, `SessionId`, `TokenUsage`, `ContextGauge`, `Status`, `compute_status`, `Sanitized` | status table and sanitizer tests pass |
+| **M1** core types | `Session`, `SessionId`, `TokenUsage`, `ContextGauge`, `Status` (with `waiting`), `compute_status`, `Sanitized`, `ProjectDir`; awaiting-input hook (ADR 0007) | status table and sanitizer tests pass |
 | **M2** Claude collector | `pinball-collectors` with `discover` and `claude` | fixtures parse; live sessions listed by a CLI subcommand |
 | **M3** Codex collector | `codex` module, normalized usage | fixtures parse; app-server hosts map to many sessions |
-| **M4** web and playfield | axum, `pinball-store` Board, routes of §8, the UI from [COMPONENTS.md](design/COMPONENTS.md) | SSE contract and adversarial tests pass |
+| **M4** web and playfield | axum, `pinball-store` Board, routes of §8, the UI from [COMPONENTS.md](design/COMPONENTS.md), waiting chime and action links (ADR 0007, 0008) | SSE contract and adversarial tests pass |
 | **M5** Cursor collector | read-only `state.vscdb`, transcripts | WAL test passes; coins show "—" |
 | **M6** history | SQLite single-writer history in `pinball-store` | sparklines survive a restart |
 
