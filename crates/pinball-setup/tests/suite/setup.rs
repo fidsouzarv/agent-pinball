@@ -188,3 +188,35 @@ fn agent_prompt_carries_diffs_commands_and_json() {
     assert!(prompt.contains("setup --remove --yes"));
     assert!(prompt.contains("\"agents\""));
 }
+
+// Adversarial: the report feeds the setup page and the brief pasted into
+// another agent. A config whose formatting differs from ours would make a
+// text diff show the whole file, secrets included; only agent-pinball's
+// own entries may appear.
+#[test]
+fn report_never_carries_other_config_text() {
+    let (home, env) = home();
+    let secret = "sk-ant-FAKE0123456789abcdef";
+    fs::write(
+        home.path().join(".claude/settings.json"),
+        format!("{{\"env\":{{\"ANTHROPIC_API_KEY\":\"{secret}\"}},\"hooks\":{{\"Stop\":[{{\"hooks\":[{{\"type\":\"command\",\"command\":\"notify --token {secret}\"}}]}}]}}}}"),
+    )
+    .expect("seed");
+
+    let report = report(&env);
+    let diff = agent(&report, AgentKind::Claude)
+        .pending_diff
+        .clone()
+        .expect("install pending");
+    assert!(!diff.contains("FAKE"), "{diff}");
+    assert!(diff.contains("+hooks.Stop: '"), "{diff}");
+    assert!(
+        diff.lines().skip(2).all(|line| line.starts_with('+')),
+        "{diff}"
+    );
+    assert!(!agent_prompt(&report).contains("FAKE"));
+
+    // The full diff is for the user's own terminal only.
+    let plans = plan(&env, Action::Install, &[AgentKind::Claude]);
+    assert!(plans[0].diff().contains("FAKE"));
+}

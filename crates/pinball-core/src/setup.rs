@@ -123,7 +123,8 @@ pub struct AgentReport {
     pub config_path: String,
     /// Current hook state.
     pub hooks: HookState,
-    /// Unified diff setup would apply; `None` when nothing would change.
+    /// agent-pinball's own entries setup would add or remove, as diff
+    /// lines; `None` when nothing would change. Never other config text.
     pub pending_diff: Option<String>,
     /// Newest event received from this agent's hooks.
     pub last_event: Option<HookRecord>,

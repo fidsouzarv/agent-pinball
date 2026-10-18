@@ -188,6 +188,56 @@ pub(crate) fn remove(spec: Spec, doc: &mut Map<String, Value>) -> Result<(), Str
     Ok(())
 }
 
+/// agent-pinball's entries that differ between two versions of a config,
+/// as `+`/`-` lines naming the event and the command. Nothing else from the
+/// documents is included.
+pub(crate) fn own_changes(
+    spec: Spec,
+    before: &Map<String, Value>,
+    after: &Map<String, Value>,
+) -> Vec<String> {
+    let ours = |doc: &Map<String, Value>, name: &str| {
+        doc.get("hooks")
+            .and_then(|hooks| hooks.get(name))
+            .map(|entries| our_commands(spec.layout, entries))
+            .unwrap_or_default()
+    };
+    let mut names: Vec<&String> = Vec::new();
+    for doc in [before, after] {
+        for name in doc
+            .get("hooks")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|h| h.keys())
+        {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    let mut lines = Vec::new();
+    if spec.layout == Layout::Flat
+        && !before.contains_key("version")
+        && after.contains_key("version")
+    {
+        lines.push("+version: 1".to_owned());
+    }
+    for name in names {
+        let (old, new) = (ours(before, name), ours(after, name));
+        lines.extend(
+            old.iter()
+                .filter(|c| !new.contains(c))
+                .map(|c| format!("-hooks.{name}: {c}")),
+        );
+        lines.extend(
+            new.iter()
+                .filter(|c| !old.contains(c))
+                .map(|c| format!("+hooks.{name}: {c}")),
+        );
+    }
+    lines
+}
+
 fn entry(layout: Layout, command: &str) -> Value {
     match layout {
         Layout::Grouped => json!({ "hooks": [{ "type": "command", "command": command }] }),

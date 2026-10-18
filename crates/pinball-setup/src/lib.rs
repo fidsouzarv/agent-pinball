@@ -91,7 +91,9 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Unified diff of the change, for the user to review.
+    /// Unified diff of the whole file, for the user's own terminal. It can
+    /// show any line of the agent's config, secrets included, so it never
+    /// goes into the report: use [`Plan::own_changes`] there.
     #[must_use]
     pub fn diff(&self) -> String {
         let label = self.path.display().to_string();
@@ -99,6 +101,23 @@ impl Plan {
             .unified_diff()
             .header(&label, &label)
             .to_string()
+    }
+
+    /// Only agent-pinball's own entries that would be added or removed, as
+    /// diff lines. Safe to show on the setup page or hand to another agent:
+    /// nothing else from the config appears, whatever its formatting.
+    #[must_use]
+    pub fn own_changes(&self) -> String {
+        let spec = hooks::Spec::of(self.kind);
+        let before = hooks::parse(self.before.as_deref()).unwrap_or_default();
+        let after = hooks::parse(Some(&self.after)).unwrap_or_default();
+        let label = self.path.display();
+        let mut out = format!("--- {label}\n+++ {label}\n");
+        for line in hooks::own_changes(spec, &before, &after) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+        out
     }
 }
 
@@ -196,7 +215,7 @@ fn agent_report(env: &SetupEnv, kind: AgentKind) -> AgentReport {
         root_found,
         config_path: env.config_path(kind).display().to_string(),
         hooks,
-        pending_diff: plan.map(|plan| plan.diff()),
+        pending_diff: plan.map(|plan| plan.own_changes()),
         last_event: spool::last_event(&env.state_dir, kind),
         note,
     }

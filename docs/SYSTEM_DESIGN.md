@@ -491,6 +491,11 @@ It has three faces over one core in `pinball-setup`:
 | Codex | `<codex root>/hooks.json` | the same names; the user trusts them with `/hooks` in Codex |
 | Cursor | `$HOME/.cursor/hooks.json` (`version: 1`) | `sessionStart`, `stop`, `sessionEnd`, `preCompact` |
 
+Only the terminal shows the full diff of an agent's config. The setup page
+and the `--agent` brief list just agent-pinball's own entries that would be
+added or removed, because an agent config can hold secrets (`env` keys,
+tokens in other hooks) and the brief is meant to be pasted elsewhere.
+
 Prompt-carrying events (`UserPromptSubmit`, `beforeSubmitPrompt`) are never
 hooked. Each entry runs `'<binary>' hook --state-dir '<dir>' <kind> <event>`,
 which reads at most 64 KiB of the payload for 2 s, keeps only the session id
