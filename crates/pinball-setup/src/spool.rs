@@ -6,8 +6,13 @@
 //! - Codex: `session_id`, `cwd` (<https://github.com/openai/codex/blob/main/codex-rs/hooks/src/lib.rs>)
 //! - Cursor: `conversation_id`, `workspace_roots` (<https://cursor.com/docs/agent/hooks>)
 //!
+//! For `AwaitingInput` only, `hook_event_name` and Claude Code's
+//! `notification_type` are matched against fixed names to pick a
+//! `WaitingReason`; the payload's text is not copied.
+//!
 //! Everything else in the payload (prompts, `last_assistant_message`,
-//! `custom_instructions`, transcript paths, `user_email`) is never read.
+//! `custom_instructions`, `message`, `title`, `tool_input`, transcript paths,
+//! `user_email`) is never read.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -16,7 +21,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use pinball_core::{AgentKind, HookEventKind, HookRecord};
+use pinball_core::{AgentKind, HookEventKind, HookRecord, WaitingReason};
 use serde_json::Value;
 
 /// Most payload bytes read from a hook's stdin.
@@ -51,7 +56,9 @@ pub fn read_payload(input: impl Read + Send + 'static, deadline: Duration) -> Ve
 /// another agent: Cursor also runs Claude Code's hooks from
 /// `~/.claude/settings.json` (its payloads carry `cursor_version`), and its
 /// own hook already records the event, so keeping it would log a Cursor
-/// session twice, once as Claude.
+/// session twice, once as Claude. Also `None` for an `AwaitingInput` payload
+/// that names no known reason to wait, such as Claude Code's `auth_success`
+/// notification.
 #[must_use]
 pub fn record(
     kind: AgentKind,
@@ -63,6 +70,10 @@ pub fn record(
     if kind != AgentKind::Cursor && value.get("cursor_version").is_some() {
         return None;
     }
+    let reason = match event {
+        HookEventKind::AwaitingInput => Some(waiting_reason(&value)?),
+        _ => None,
+    };
     let session_id = ["session_id", "conversation_id"]
         .into_iter()
         .find_map(|key| value.get(key)?.as_str())
@@ -83,7 +94,28 @@ pub fn record(
         session_id,
         project,
         at_ms,
+        reason,
     })
+}
+
+/// Why an `AwaitingInput` hook fired, from fixed event and notification
+/// names. Claude Code: <https://code.claude.com/docs/en/hooks#notification>;
+/// Codex: `permission-request.command.input.schema.json` in
+/// <https://github.com/openai/codex/tree/main/codex-rs/hooks/schema/generated>.
+fn waiting_reason(payload: &Value) -> Option<WaitingReason> {
+    let field = |key| payload.get(key).and_then(Value::as_str);
+    match field("hook_event_name")? {
+        "PermissionRequest" => Some(WaitingReason::Approval),
+        "Notification" => match field("notification_type")? {
+            "permission_prompt" => Some(WaitingReason::Approval),
+            "elicitation_dialog" | "elicitation_url_dialog" | "agent_needs_input" => {
+                Some(WaitingReason::Question)
+            }
+            "idle_prompt" => Some(WaitingReason::IdlePrompt),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Provider ids are UUIDs or similar; anything else is dropped, not cleaned.
@@ -236,6 +268,104 @@ mod tests {
         let project = record.project.unwrap();
         assert!(!project.contains('\u{202E}') && !project.contains('\u{7}'));
         assert_eq!(project.chars().count(), MAX_PROJECT_CHARS);
+    }
+
+    // Adversarial: a waiting payload's text carries secrets and markup; only
+    // the reason may reach the spool.
+    #[test]
+    fn a_permission_prompt_keeps_only_its_reason() {
+        let payload = br#"{"session_id":"s-1","cwd":"/w/api","hook_event_name":"Notification",
+            "notification_type":"permission_prompt",
+            "message":"Claude needs your permission to use sk-ant-FAKE0123 <script>alert(1)</script>",
+            "title":"<script>t()</script>","tool_input":{"command":"echo sk-ant-FAKE0123"}}"#;
+        let record = record(AgentKind::Claude, HookEventKind::AwaitingInput, payload, 4).unwrap();
+        let stored = serde_json::to_string(&record).unwrap();
+        assert_eq!(
+            stored,
+            r#"{"kind":"claude","event":"awaiting_input","sessionId":"s-1","project":"api","atMs":4,"reason":"approval"}"#
+        );
+    }
+
+    #[rstest::rstest]
+    #[case(
+        r#"{"hook_event_name":"PermissionRequest","tool_input":{"command":"rm -rf /"}}"#,
+        WaitingReason::Approval
+    )]
+    #[case(
+        r#"{"hook_event_name":"Notification","notification_type":"permission_prompt"}"#,
+        WaitingReason::Approval
+    )]
+    #[case(
+        r#"{"hook_event_name":"Notification","notification_type":"elicitation_dialog"}"#,
+        WaitingReason::Question
+    )]
+    #[case(
+        r#"{"hook_event_name":"Notification","notification_type":"elicitation_url_dialog"}"#,
+        WaitingReason::Question
+    )]
+    #[case(
+        r#"{"hook_event_name":"Notification","notification_type":"agent_needs_input"}"#,
+        WaitingReason::Question
+    )]
+    #[case(
+        r#"{"hook_event_name":"Notification","notification_type":"idle_prompt"}"#,
+        WaitingReason::IdlePrompt
+    )]
+    fn waiting_payloads_map_to_a_reason(#[case] payload: &str, #[case] reason: WaitingReason) {
+        for kind in [AgentKind::Claude, AgentKind::Codex] {
+            let record = record(kind, HookEventKind::AwaitingInput, payload.as_bytes(), 1).unwrap();
+            assert_eq!(record.reason, Some(reason), "{payload}");
+        }
+    }
+
+    // Adversarial: anything but a known name records nothing, so no
+    // attacker-chosen string becomes a reason.
+    #[test]
+    fn unknown_waiting_payloads_record_nothing() {
+        let oversized = format!(
+            r#"{{"hook_event_name":"Notification","notification_type":"permission_prompt{}"}}"#,
+            "x".repeat(70_000)
+        );
+        for payload in [
+            r#"{"hook_event_name":"Notification","notification_type":"auth_success"}"#,
+            r#"{"hook_event_name":"Notification","notification_type":"Permission_Prompt"}"#,
+            r#"{"hook_event_name":"Notification","notification_type":7}"#,
+            r#"{"hook_event_name":"Notification","notification_type":["permission_prompt"]}"#,
+            r#"{"hook_event_name":"Notification"}"#,
+            r#"{"hook_event_name":"Stop","notification_type":"permission_prompt"}"#,
+            r#"{"notification_type":"permission_prompt"}"#,
+            "not json",
+            "",
+            &oversized,
+        ] {
+            assert_eq!(
+                record(
+                    AgentKind::Claude,
+                    HookEventKind::AwaitingInput,
+                    payload.as_bytes(),
+                    1
+                ),
+                None,
+                "{}",
+                &payload[..payload.len().min(80)]
+            );
+        }
+        // Control: other events never carry a reason, whatever the payload.
+        let stop = br#"{"hook_event_name":"Notification","notification_type":"permission_prompt"}"#;
+        let stop = record(AgentKind::Claude, HookEventKind::Stop, stop, 1).unwrap();
+        assert_eq!(stop.reason, None);
+    }
+
+    // Cursor also runs Claude Code's Notification hook; that must not show a
+    // Cursor session waiting as a Claude one.
+    #[test]
+    fn cursor_payload_through_a_claude_notification_is_skipped() {
+        let payload = br#"{"session_id":"c-1","hook_event_name":"Notification",
+            "notification_type":"permission_prompt","cursor_version":"3.25.9"}"#;
+        assert_eq!(
+            record(AgentKind::Claude, HookEventKind::AwaitingInput, payload, 1),
+            None
+        );
     }
 
     #[test]

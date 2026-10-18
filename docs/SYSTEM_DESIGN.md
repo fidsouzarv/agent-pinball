@@ -487,9 +487,19 @@ It has three faces over one core in `pinball-setup`:
 
 | Agent | File | Events hooked |
 |---|---|---|
-| Claude Code | `<claude root>/settings.json` | `SessionStart`, `Stop`, `SessionEnd`, `PreCompact` |
-| Codex | `<codex root>/hooks.json` | the same names; the user trusts them with `/hooks` in Codex |
-| Cursor | `$HOME/.cursor/hooks.json` (`version: 1`) | `sessionStart`, `stop`, `sessionEnd`, `preCompact` |
+| Claude Code | `<claude root>/settings.json` | `SessionStart`, `Stop`, `SessionEnd`, `PreCompact`, `PermissionRequest`, `Notification` |
+| Codex | `<codex root>/hooks.json` | `SessionStart`, `Stop`, `SessionEnd`, `PreCompact`, `PermissionRequest`; the user trusts them with `/hooks` in Codex |
+| Cursor | `$HOME/.cursor/hooks.json` (`version: 1`) | `sessionStart`, `stop`, `sessionEnd`, `preCompact`; Cursor has no hook that fires while it waits |
+
+`PermissionRequest` and `Notification` are installed as the `awaiting_input`
+event. The receiver keeps only a reason, matched against fixed names:
+`PermissionRequest` and the `permission_prompt` notification are `approval`;
+`elicitation_dialog`, `elicitation_url_dialog` and `agent_needs_input` are
+`question`; `idle_prompt` is `idle_prompt`. Any other notification type
+(`auth_success`, unknown, non-string) records nothing, and the `message`,
+`title` and `tool_input` fields are never read. A `PermissionRequest` hook that
+prints a decision answers the prompt, which is one more reason the receiver
+prints nothing.
 
 Only the terminal shows the full diff of an agent's config. The setup page
 and the `--agent` brief list just agent-pinball's own entries that would be
@@ -499,7 +509,8 @@ tokens in other hooks) and the brief is meant to be pasted elsewhere.
 Prompt-carrying events (`UserPromptSubmit`, `beforeSubmitPrompt`) are never
 hooked. Each entry runs `'<binary>' hook --state-dir '<dir>' <kind> <event>`,
 which reads at most 64 KiB of the payload for 2 s, keeps only the session id
-(when it is id-shaped) and the working directory's last component, appends a
+(when it is id-shaped), the working directory's last component and, for
+`awaiting_input`, the reason, appends a
 record to `<state dir>/hooks/<kind>.jsonl` (rotated past 1 MiB), prints
 nothing and exits 0. Cursor also runs Claude Code's hooks from
 `~/.claude/settings.json`; a payload carrying `cursor_version` that arrives

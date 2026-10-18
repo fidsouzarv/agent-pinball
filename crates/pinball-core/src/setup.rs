@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::AgentKind;
+use crate::{AgentKind, WaitingReason};
 
 /// An agent event agent-pinball hooks into. Prompt-carrying events
 /// (`UserPromptSubmit`, `beforeSubmitPrompt`) are left out on purpose.
@@ -21,15 +21,20 @@ pub enum HookEventKind {
     SessionEnd,
     /// The context is about to be compacted.
     PreCompact,
+    /// The agent stopped to wait for the user: a permission prompt, a
+    /// question, or an idle prompt.
+    AwaitingInput,
 }
 
 impl HookEventKind {
-    /// Every hooked event, in install order.
-    pub const ALL: [Self; 4] = [
+    /// Every event the `hook` command accepts. Which ones an agent gets, and
+    /// under what name, is decided per agent by `setup`.
+    pub const ALL: [Self; 5] = [
         Self::SessionStart,
         Self::Stop,
         Self::SessionEnd,
         Self::PreCompact,
+        Self::AwaitingInput,
     ];
 
     /// Stable identifier used on the `hook` command line and in the spool.
@@ -40,6 +45,7 @@ impl HookEventKind {
             Self::Stop => "stop",
             Self::SessionEnd => "session_end",
             Self::PreCompact => "pre_compact",
+            Self::AwaitingInput => "awaiting_input",
         }
     }
 }
@@ -105,6 +111,10 @@ pub struct HookRecord {
     pub project: Option<String>,
     /// When the hook ran, epoch milliseconds.
     pub at_ms: u64,
+    /// Why the agent is waiting; set only on `AwaitingInput`. Absent from
+    /// spool lines written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<WaitingReason>,
 }
 
 /// Setup state of one agent.
@@ -165,6 +175,7 @@ mod tests {
             session_id: Some("abc".to_owned()),
             project: None,
             at_ms: 7,
+            reason: None,
         };
         let json = serde_json::to_string(&record).unwrap();
         assert_eq!(
@@ -172,6 +183,27 @@ mod tests {
             r#"{"kind":"claude","event":"pre_compact","sessionId":"abc","project":null,"atMs":7}"#
         );
         assert_eq!(serde_json::from_str::<HookRecord>(&json).unwrap(), record);
+    }
+
+    #[test]
+    fn a_waiting_record_carries_its_reason_and_old_lines_still_parse() {
+        let record = HookRecord {
+            kind: AgentKind::Codex,
+            event: HookEventKind::AwaitingInput,
+            session_id: None,
+            project: None,
+            at_ms: 3,
+            reason: Some(WaitingReason::Approval),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(json.ends_with(r#""atMs":3,"reason":"approval"}"#), "{json}");
+        assert_eq!(serde_json::from_str::<HookRecord>(&json).unwrap(), record);
+
+        let old = r#"{"kind":"claude","event":"stop","sessionId":null,"project":null,"atMs":1}"#;
+        assert_eq!(
+            serde_json::from_str::<HookRecord>(old).unwrap().reason,
+            None
+        );
     }
 
     #[test]
