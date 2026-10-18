@@ -20,6 +20,7 @@ clap = { workspace = true }
 pinball-core = { workspace = true }
 pinball-setup = { workspace = true }
 pinball-web = { workspace = true }
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "time"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

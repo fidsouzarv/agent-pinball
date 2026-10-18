@@ -1,27 +1,36 @@
 //! HTTP surface of the agent-pinball panel.
 //!
-//! Std-only: the setup page is server-rendered and polled, so a sequential
-//! loop is enough; axum comes with the live playfield and its SSE stream
-//! (docs/SYSTEM_DESIGN.md §3). Read-only by design: see this crate's
-//! `clippy.toml`. Every route is `GET`.
+//! axum routes the requests; [`serve`] owns each connection, so the head cap,
+//! the connection deadline and the write timeout hold before a request reaches
+//! axum (`conn.rs`). Read-only by design: see this crate's `clippy.toml`.
+//! Every route is `GET`.
 
+mod conn;
 mod setup_page;
 
 use std::borrow::Cow;
 use std::fmt;
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::time::{Duration, Instant};
+use std::io::{self, BufRead, BufReader, Write};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
+use std::sync::Arc;
+use std::time::Duration;
 
-/// Largest request head read before answering 431, so a client cannot make
-/// the server buffer without bound.
-const MAX_HEAD_BYTES: usize = 8 * 1024;
-/// Most input discarded after refusing an oversized head.
-const MAX_DRAIN_BYTES: u64 = 64 * 1024;
-/// Write, connect and probe timeout.
+use axum::Router;
+use axum::extract::{Request, State};
+use axum::handler::Handler;
+use axum::http::header::{
+    CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderName, REFERRER_POLICY,
+    X_CONTENT_TYPE_OPTIONS,
+};
+use axum::http::{HeaderValue, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::IntoResponse;
+use axum::routing::{MethodRouter, get};
+
+pub use conn::serve;
+
+/// Connect and probe timeout, and how long one write may stall.
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
-/// Total time a connection may spend sending its request, however it trickles.
-const CONNECTION_DEADLINE: Duration = Duration::from_secs(10);
 
 /// How a permitted bind address is exposed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,32 +77,33 @@ pub fn check_bind(addr: SocketAddr, in_container: bool) -> Result<BindPosture, B
 
 pub use setup_page::{SetupPage, SetupProvider};
 
-/// Sent on every response. No inline script or style is ever needed, so the
-/// policy can stay this strict (docs/SYSTEM_DESIGN.md §8).
-const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
-     img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; \
-     frame-ancestors 'none'";
+/// Sent on every response, refusals included. No inline script or style is
+/// ever needed, so the policy can stay this strict (docs/SYSTEM_DESIGN.md §8).
+const SECURITY_HEADERS: [(HeaderName, &str); 4] = [
+    (
+        CONTENT_SECURITY_POLICY,
+        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; \
+         connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    ),
+    (X_CONTENT_TYPE_OPTIONS, "nosniff"),
+    (REFERRER_POLICY, "no-referrer"),
+    (CACHE_CONTROL, "no-cache"),
+];
 
 const TEXT: &str = "text/plain; charset=utf-8";
 
 /// A response the panel can send.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Response {
-    /// HTTP status code.
-    pub status: u16,
-    /// Reason phrase for the status line.
-    pub reason: &'static str,
-    /// `Content-Type` header value.
-    pub content_type: &'static str,
-    /// Body.
-    pub body: Cow<'static, str>,
+pub(crate) struct Response {
+    status: StatusCode,
+    content_type: &'static str,
+    body: Cow<'static, str>,
 }
 
 impl Response {
-    const fn text(status: u16, reason: &'static str, body: &'static str) -> Self {
+    const fn text(status: StatusCode, body: &'static str) -> Self {
         Self {
             status,
-            reason,
             content_type: TEXT,
             body: Cow::Borrowed(body),
         }
@@ -101,25 +111,31 @@ impl Response {
 
     pub(crate) fn ok(content_type: &'static str, body: impl Into<Cow<'static, str>>) -> Self {
         Self {
-            status: 200,
-            reason: "OK",
+            status: StatusCode::OK,
             content_type,
             body: body.into(),
         }
     }
 }
 
-const OK: Response = Response::text(200, "OK", "ok\n");
-const BAD_REQUEST: Response = Response::text(400, "Bad Request", "bad request\n");
-const FORBIDDEN: Response = Response::text(403, "Forbidden", "host not allowed\n");
-const NOT_FOUND: Response = Response::text(404, "Not Found", "not found\n");
+impl IntoResponse for Response {
+    fn into_response(self) -> axum::response::Response {
+        (self.status, [(CONTENT_TYPE, self.content_type)], self.body).into_response()
+    }
+}
+
+const OK: Response = Response::text(StatusCode::OK, "ok\n");
+const BAD_REQUEST: Response = Response::text(StatusCode::BAD_REQUEST, "bad request\n");
+const FORBIDDEN: Response = Response::text(StatusCode::FORBIDDEN, "host not allowed\n");
+const NOT_FOUND: Response = Response::text(StatusCode::NOT_FOUND, "not found\n");
 const METHOD_NOT_ALLOWED: Response =
-    Response::text(405, "Method Not Allowed", "method not allowed\n");
+    Response::text(StatusCode::METHOD_NOT_ALLOWED, "method not allowed\n");
 const HEAD_TOO_LARGE: Response = Response::text(
-    431,
-    "Request Header Fields Too Large",
+    StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
     "request head too large\n",
 );
+const INTERNAL_ERROR: Response =
+    Response::text(StatusCode::INTERNAL_SERVER_ERROR, "internal error\n");
 
 /// What the server answers for: the Host allowlist and the pages it has.
 pub struct Site {
@@ -140,56 +156,93 @@ impl Site {
     }
 }
 
-/// Routes one request head. Pure, so the Host guard is testable without a socket.
+/// The panel's routes behind the `Host` guard.
 ///
-/// The `Host` allowlist runs before routing: it is the DNS-rebinding guard, and
-/// a request without `Host` is refused rather than assumed local.
-#[must_use]
-pub fn route(head: &str, site: &Site) -> Response {
-    let mut lines = head.lines();
-    let Some(request_line) = lines.next() else {
-        return BAD_REQUEST;
-    };
-    let mut parts = request_line.split_whitespace();
-    let (Some(method), Some(target)) = (parts.next(), parts.next()) else {
-        return BAD_REQUEST;
-    };
-    let host = lines
-        .filter_map(|line| line.split_once(':'))
-        .find(|(name, _)| name.trim().eq_ignore_ascii_case("host"))
-        .map(|(_, value)| value.trim());
-    let Some(host) = host else {
-        return BAD_REQUEST;
-    };
-    if !host_allowed(host, &site.allowed_hosts) {
-        return FORBIDDEN;
+/// The guard is the last layer added, so it wraps every route and the
+/// fallback: it is the DNS-rebinding guard, and it runs before routing.
+pub(crate) fn app(site: Arc<Site>) -> Router {
+    let mut router = Router::new().route("/healthz", get_only(async || OK));
+    for (path, content_type, body) in setup_page::ASSETS {
+        router = router.route(
+            path,
+            get_only(async move || Response::ok(content_type, body)),
+        );
     }
-    let Some(response) = resource(target, site) else {
-        return NOT_FOUND;
-    };
-    if method == "GET" {
-        response
-    } else {
-        METHOD_NOT_ALLOWED
+    if site.setup.is_some() {
+        let html = get_only(async |State(site)| with_setup(site, setup_page::html).await);
+        let json = get_only(async |State(site)| with_setup(site, setup_page::json).await);
+        router = router
+            .route("/", html.clone())
+            .route("/setup", html)
+            .route("/api/setup", json);
+    }
+    router
+        .fallback(async || NOT_FOUND)
+        .with_state(Arc::clone(&site))
+        .layer(middleware::from_fn_with_state(site, guard))
+}
+
+/// `GET` only. axum also answers `HEAD` from a `GET` route, so it is refused
+/// explicitly along with every other method.
+fn get_only<H, T>(handler: H) -> MethodRouter<Arc<Site>>
+where
+    H: Handler<T, Arc<Site>>,
+    T: 'static,
+{
+    get(handler)
+        .head(async || METHOD_NOT_ALLOWED)
+        .fallback(async || METHOD_NOT_ALLOWED)
+}
+
+/// Builds the setup page off the async workers: the provider reads agent
+/// config files.
+async fn with_setup(site: Arc<Site>, render: fn(&SetupPage) -> Response) -> Response {
+    let page = tokio::task::spawn_blocking(move || site.setup.as_ref().map(|page| render(&page())));
+    match page.await {
+        Ok(Some(response)) => response,
+        Ok(None) => NOT_FOUND,
+        Err(_) => INTERNAL_ERROR,
     }
 }
 
-/// The response for a path, before the method check. The setup provider is
-/// called only for a `GET`, through the closure, so a refused method costs
-/// nothing.
-fn resource(target: &str, site: &Site) -> Option<Response> {
-    let path = target.split_once('?').map_or(target, |(path, _)| path);
-    if path == "/healthz" {
-        return Some(OK);
+/// Refuses a foreign or missing `Host` before routing, and stamps the security
+/// headers on every response, refusals included.
+async fn guard(
+    State(site): State<Arc<Site>>,
+    request: Request,
+    next: Next,
+) -> axum::response::Response {
+    let mut response = match refusal(&request, &site.allowed_hosts) {
+        Some(refused) => refused.into_response(),
+        None => next.run(request).await,
+    };
+    let headers = response.headers_mut();
+    for (name, value) in SECURITY_HEADERS {
+        headers.insert(name, HeaderValue::from_static(value));
     }
-    if let Some(asset) = setup_page::asset(path) {
-        return Some(asset);
-    }
-    let provider = site.setup.as_ref()?;
-    match path {
-        "/" | "/setup" => Some(setup_page::html(&provider())),
-        "/api/setup" => Some(setup_page::json(&provider())),
-        _ => None,
+    response
+}
+
+/// A request without exactly one readable `Host` is refused rather than
+/// assumed local. An absolute-form target names its own authority, which must
+/// pass the allowlist too.
+fn refusal(request: &Request, allowed_hosts: &[String]) -> Option<Response> {
+    let mut hosts = request.headers().get_all(HOST).iter();
+    let (Some(host), None) = (hosts.next(), hosts.next()) else {
+        return Some(BAD_REQUEST);
+    };
+    let Ok(host) = host.to_str() else {
+        return Some(BAD_REQUEST);
+    };
+    let authority = request
+        .uri()
+        .authority()
+        .map(|authority| authority.as_str());
+    let allowed = |name: &str| host_allowed(name, allowed_hosts);
+    if allowed(host) && authority.is_none_or(allowed) {
+        None
+    } else {
+        Some(FORBIDDEN)
     }
 }
 
@@ -212,117 +265,6 @@ fn strip_port(host: &str) -> &str {
         }
         _ => host,
     }
-}
-
-/// Serves until the listener fails. One connection at a time: the panel has a
-/// local viewer, and a sequential loop keeps resource use bounded. The
-/// per-connection deadline is what keeps one client from holding the loop.
-pub fn serve(listener: &TcpListener, site: &Site) -> io::Result<()> {
-    serve_with_deadline(listener, site, CONNECTION_DEADLINE)
-}
-
-/// `serve` with an injectable deadline, so tests need not wait seconds.
-pub(crate) fn serve_with_deadline(
-    listener: &TcpListener,
-    site: &Site,
-    deadline: Duration,
-) -> io::Result<()> {
-    for stream in listener.incoming() {
-        // One bad connection must not stop the server.
-        let result = stream.and_then(|stream| {
-            let mut reader = DeadlineReader {
-                stream: &stream,
-                until: Instant::now() + deadline,
-            };
-            handle(&stream, &mut reader, site)
-        });
-        if let Err(err) = result {
-            eprintln!("agent-pinball: connection error: {err}");
-        }
-    }
-    Ok(())
-}
-
-/// Reads under one deadline for the whole connection. A per-read timeout
-/// alone lets a client that sends a byte just under it hold the sequential
-/// accept loop for as long as it likes.
-struct DeadlineReader<'a> {
-    stream: &'a TcpStream,
-    until: Instant,
-}
-
-impl Read for DeadlineReader<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let remaining = self.until.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "connection deadline exceeded",
-            ));
-        }
-        self.stream.set_read_timeout(Some(remaining))?;
-        let mut stream = self.stream;
-        stream.read(buf)
-    }
-}
-
-fn handle(stream: &TcpStream, reader: &mut DeadlineReader<'_>, site: &Site) -> io::Result<()> {
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
-    match read_head(&mut *reader)? {
-        Some(head) => write_response(stream, &route(&head, site)),
-        None => {
-            write_response(stream, &HEAD_TOO_LARGE)?;
-            // Closing with unread input makes the kernel send RST, which can
-            // discard the 431 before the client reads it. Signal EOF, then
-            // discard a bounded amount of what the client is still sending,
-            // still under the connection deadline.
-            stream.shutdown(Shutdown::Write)?;
-            io::copy(&mut reader.take(MAX_DRAIN_BYTES), &mut io::sink())?;
-            Ok(())
-        }
-    }
-}
-
-/// Reads up to the blank line ending the head. `None` means it was too large.
-fn read_head(input: impl Read) -> io::Result<Option<String>> {
-    let limit = u64::try_from(MAX_HEAD_BYTES).unwrap_or(u64::MAX) + 1;
-    let mut reader = BufReader::new(input.take(limit));
-    let mut head = String::new();
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
-            break;
-        }
-        if head.len() + line.len() > MAX_HEAD_BYTES {
-            return Ok(None);
-        }
-        let end_of_head = line == "\r\n" || line == "\n";
-        head.push_str(&line);
-        if end_of_head {
-            break;
-        }
-    }
-    Ok(Some(head))
-}
-
-fn write_response(mut stream: &TcpStream, response: &Response) -> io::Result<()> {
-    write!(
-        stream,
-        "HTTP/1.1 {} {}\r\n\
-         Content-Type: {}\r\n\
-         Content-Length: {}\r\n\
-         Content-Security-Policy: {CONTENT_SECURITY_POLICY}\r\n\
-         X-Content-Type-Options: nosniff\r\n\
-         Referrer-Policy: no-referrer\r\n\
-         Cache-Control: no-cache\r\n\
-         Connection: close\r\n\r\n{}",
-        response.status,
-        response.reason,
-        response.content_type,
-        response.body.len(),
-        response.body
-    )?;
-    stream.flush()
 }
 
 /// Probes `/healthz`, as the container healthcheck does. A wildcard bind is
@@ -354,64 +296,6 @@ mod suite;
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-
-    fn defaults() -> Site {
-        Site::new(
-            ["localhost", "127.0.0.1", "::1"]
-                .map(str::to_owned)
-                .to_vec(),
-        )
-    }
-
-    #[test]
-    fn healthz_on_allowed_host() {
-        let head = "GET /healthz HTTP/1.1\r\nHost: localhost:4242\r\n\r\n";
-        assert_eq!(route(head, &defaults()), OK);
-    }
-
-    #[test]
-    fn bracketed_ipv6_host_is_allowed() {
-        let head = "GET /healthz HTTP/1.1\r\nHost: [::1]:4242\r\n\r\n";
-        assert_eq!(route(head, &defaults()), OK);
-    }
-
-    // Adversarial: DNS rebinding sends the attacker's name as Host.
-    #[test]
-    fn foreign_host_is_refused_before_routing() {
-        let head = "GET /healthz HTTP/1.1\r\nHost: evil.example:4242\r\n\r\n";
-        assert_eq!(route(head, &defaults()), FORBIDDEN);
-        let head = "GET /nope HTTP/1.1\r\nHost: evil.example\r\n\r\n";
-        assert_eq!(route(head, &defaults()), FORBIDDEN);
-    }
-
-    #[test]
-    fn missing_host_is_a_bad_request() {
-        assert_eq!(
-            route("GET /healthz HTTP/1.1\r\n\r\n", &defaults()),
-            BAD_REQUEST
-        );
-    }
-
-    #[test]
-    fn malformed_request_line_is_a_bad_request() {
-        assert_eq!(route("", &defaults()), BAD_REQUEST);
-        assert_eq!(
-            route("GET\r\nHost: localhost\r\n\r\n", &defaults()),
-            BAD_REQUEST
-        );
-    }
-
-    #[test]
-    fn write_methods_are_not_allowed() {
-        let head = "POST /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        assert_eq!(route(head, &defaults()), METHOD_NOT_ALLOWED);
-    }
-
-    #[test]
-    fn unknown_path_is_not_found() {
-        let head = "GET /admin HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        assert_eq!(route(head, &defaults()), NOT_FOUND);
-    }
 
     #[test]
     fn loopback_bind_is_allowed_everywhere() {

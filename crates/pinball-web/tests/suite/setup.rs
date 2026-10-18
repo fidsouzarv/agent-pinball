@@ -1,12 +1,14 @@
 //! The setup page over a real loopback socket.
 
-use std::net::{SocketAddr, TcpListener};
-use std::thread;
+use std::net::SocketAddr;
+use std::time::Duration;
 
+use axum::http::StatusCode;
 use pinball_core::{AgentKind, AgentReport, HookState, SetupReport};
 
-use super::server::send;
-use crate::{SetupPage, Site, route, serve};
+use super::server::{body, call, send, start_with};
+use crate::conn::Limits;
+use crate::{SetupPage, Site};
 
 fn page() -> SetupPage {
     SetupPage {
@@ -37,11 +39,12 @@ fn setup_site() -> Site {
 }
 
 fn start() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-    let addr = listener.local_addr().expect("local addr");
-    let site = setup_site();
-    thread::spawn(move || serve(&listener, &site));
-    addr
+    let limits = Limits {
+        deadline: Duration::from_secs(10),
+        write_timeout: Duration::from_secs(5),
+        max_connections: 64,
+    };
+    start_with(setup_site(), limits)
 }
 
 fn get(addr: SocketAddr, path: &str, host: &str) -> String {
@@ -88,24 +91,30 @@ fn foreign_host_cannot_read_setup() {
 }
 
 // Adversarial: the page shows; it never accepts writes (ADR 0006).
-#[test]
-fn setup_routes_refuse_every_other_method() {
-    let site = setup_site();
-    for method in ["POST", "PUT", "DELETE", "PATCH"] {
-        for path in ["/setup", "/api/setup"] {
-            let head = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n\r\n");
-            assert_eq!(route(&head, &site).status, 405, "{method} {path}");
+#[tokio::test]
+async fn setup_routes_refuse_every_other_method() {
+    for method in ["POST", "PUT", "DELETE", "PATCH", "HEAD"] {
+        for path in ["/", "/setup", "/api/setup"] {
+            let response = call(setup_site(), method, path, &["localhost"]).await;
+            assert_eq!(
+                response.status(),
+                StatusCode::METHOD_NOT_ALLOWED,
+                "{method} {path}"
+            );
+            assert!(!body(response).await.contains("settings.json"));
         }
     }
-    let get = "GET /api/setup HTTP/1.1\r\nHost: localhost\r\n\r\n";
-    assert_eq!(route(get, &site).status, 200);
+    let response = call(setup_site(), "GET", "/api/setup", &["localhost"]).await;
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
-#[test]
-fn setup_is_absent_when_not_configured() {
-    let site = Site::new(vec!["localhost".to_owned()]);
-    let head = "GET /setup HTTP/1.1\r\nHost: localhost\r\n\r\n";
-    assert_eq!(route(head, &site).status, 404);
-    let head = "GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n";
-    assert_eq!(route(head, &site).status, 200);
+#[tokio::test]
+async fn setup_is_absent_when_not_configured() {
+    let site = || Site::new(vec!["localhost".to_owned()]);
+    for path in ["/", "/setup", "/api/setup"] {
+        let response = call(site(), "GET", path, &["localhost"]).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+    }
+    let response = call(site(), "GET", "/healthz", &["localhost"]).await;
+    assert_eq!(response.status(), StatusCode::OK);
 }
