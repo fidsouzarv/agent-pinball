@@ -32,7 +32,7 @@ similar = "3.2"
 tempfile = "3.27"
 
 # Testing.
-rstest = "0.26"
+rstest = "0.27"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
