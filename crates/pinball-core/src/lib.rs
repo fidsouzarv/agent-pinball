@@ -6,10 +6,12 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 mod setup;
+mod waiting;
 
 pub use setup::{
     AgentReport, HookEventKind, HookRecord, HookState, ParseHookEventKindError, SetupReport,
 };
+pub use waiting::WaitingReason;
 
 /// A coding agent the panel monitors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

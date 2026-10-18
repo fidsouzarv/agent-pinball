@@ -140,12 +140,20 @@ fn view(page: &SetupPage) -> PageView<'_> {
 
 /// The DMD is all capitals, project name included.
 fn ticker_line(event: &HookRecord) -> String {
-    let mut line = format!("{} {}", event.kind, event.event);
+    let mut line = format!("{} {}", event.kind, event_label(event));
     if let Some(project) = &event.project {
         line.push(' ');
         line.push_str(project);
     }
     line.to_uppercase()
+}
+
+/// The event's name, or for a waiting event what it waits on.
+fn event_label(event: &HookRecord) -> String {
+    match event.reason {
+        Some(reason) => format!("waiting {}", reason.as_str().replace('_', " ")),
+        None => event.event.to_string(),
+    }
 }
 
 fn agent_view(agent: &AgentReport) -> AgentView {
@@ -203,7 +211,7 @@ fn hooks_check(agent: &AgentReport) -> Check {
 fn event_check(agent: &AgentReport) -> Check {
     match &agent.last_event {
         Some(event) => {
-            let mut detail = event.event.to_string();
+            let mut detail = event_label(event);
             for part in [&event.project, &event.session_id].into_iter().flatten() {
                 detail.push_str(" · ");
                 detail.push_str(part);
@@ -369,7 +377,7 @@ fn coin_door() -> Markup {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use pinball_core::HookEventKind;
+    use pinball_core::{HookEventKind, WaitingReason};
 
     fn agent(kind: AgentKind, hooks: HookState) -> AgentReport {
         AgentReport {
@@ -405,6 +413,7 @@ mod tests {
             session_id: Some("s1".to_owned()),
             project: Some("api".to_owned()),
             at_ms: 9,
+            reason: None,
         });
         let mut cursor = agent(AgentKind::Cursor, HookState::Missing);
         cursor.root_found = false;
@@ -419,6 +428,23 @@ mod tests {
         assert_eq!(view.agents[0].checks[2].label, "outdated");
         assert_eq!(view.agents[1].checks[2].state, "absent");
         assert_eq!(view.agents[2].checks[3].detail, "stop · api · s1");
+    }
+
+    #[test]
+    fn a_waiting_event_names_its_reason() {
+        let mut claude = agent(AgentKind::Claude, HookState::Installed);
+        claude.last_event = Some(HookRecord {
+            kind: AgentKind::Claude,
+            event: HookEventKind::AwaitingInput,
+            session_id: None,
+            project: Some("api".to_owned()),
+            at_ms: 9,
+            reason: Some(WaitingReason::IdlePrompt),
+        });
+        let page = page(vec![claude]);
+        let view = view(&page);
+        assert_eq!(view.ticker, "CLAUDE WAITING IDLE PROMPT API");
+        assert_eq!(view.agents[0].checks[3].detail, "waiting idle prompt · api");
     }
 
     #[test]

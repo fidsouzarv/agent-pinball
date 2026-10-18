@@ -26,9 +26,36 @@ pub(crate) struct Spec {
     /// Config file name inside the agent's root.
     pub file: &'static str,
     layout: Layout,
-    /// The agent's names for `HookEventKind::ALL`, in the same order.
-    events: [&'static str; 4],
+    /// The agent's name for each event it is hooked on, in install order.
+    /// Events added later go last, so an upgrade only appends.
+    events: &'static [(HookEventKind, &'static str)],
 }
+
+const CLAUDE_EVENTS: &[(HookEventKind, &str)] = &[
+    (HookEventKind::SessionStart, "SessionStart"),
+    (HookEventKind::Stop, "Stop"),
+    (HookEventKind::SessionEnd, "SessionEnd"),
+    (HookEventKind::PreCompact, "PreCompact"),
+    (HookEventKind::AwaitingInput, "PermissionRequest"),
+    (HookEventKind::AwaitingInput, "Notification"),
+];
+
+// Codex has no `Notification` event.
+const CODEX_EVENTS: &[(HookEventKind, &str)] = &[
+    (HookEventKind::SessionStart, "SessionStart"),
+    (HookEventKind::Stop, "Stop"),
+    (HookEventKind::SessionEnd, "SessionEnd"),
+    (HookEventKind::PreCompact, "PreCompact"),
+    (HookEventKind::AwaitingInput, "PermissionRequest"),
+];
+
+// Cursor documents no hook that fires while it waits for the user.
+const CURSOR_EVENTS: &[(HookEventKind, &str)] = &[
+    (HookEventKind::SessionStart, "sessionStart"),
+    (HookEventKind::Stop, "stop"),
+    (HookEventKind::SessionEnd, "sessionEnd"),
+    (HookEventKind::PreCompact, "preCompact"),
+];
 
 impl Spec {
     pub(crate) const fn of(kind: AgentKind) -> Self {
@@ -36,23 +63,23 @@ impl Spec {
             AgentKind::Claude => Self {
                 file: "settings.json",
                 layout: Layout::Grouped,
-                events: ["SessionStart", "Stop", "SessionEnd", "PreCompact"],
+                events: CLAUDE_EVENTS,
             },
             AgentKind::Codex => Self {
                 file: "hooks.json",
                 layout: Layout::Grouped,
-                events: ["SessionStart", "Stop", "SessionEnd", "PreCompact"],
+                events: CODEX_EVENTS,
             },
             AgentKind::Cursor => Self {
                 file: "hooks.json",
                 layout: Layout::Flat,
-                events: ["sessionStart", "stop", "sessionEnd", "preCompact"],
+                events: CURSOR_EVENTS,
             },
         }
     }
 
     fn event_names(self) -> impl Iterator<Item = (HookEventKind, &'static str)> {
-        HookEventKind::ALL.into_iter().zip(self.events)
+        self.events.iter().copied()
     }
 }
 
@@ -404,6 +431,93 @@ mod tests {
         assert_eq!(
             state(Spec::of(AgentKind::Codex), &doc, cmd),
             HookState::Outdated
+        );
+    }
+
+    #[test]
+    fn waiting_events_are_hooked_where_the_agent_has_them() {
+        let claude = installed(AgentKind::Claude, None);
+        let codex = installed(AgentKind::Codex, None);
+        let cursor = installed(AgentKind::Cursor, None);
+        let waiting = json!([{ "hooks": [{ "type": "command", "command": cmd(HookEventKind::AwaitingInput) }] }]);
+        assert_eq!(claude["hooks"]["PermissionRequest"], waiting);
+        assert_eq!(claude["hooks"]["Notification"], waiting);
+        assert_eq!(codex["hooks"]["PermissionRequest"], waiting);
+        assert!(codex["hooks"].get("Notification").is_none());
+        assert_eq!(cursor["hooks"].as_object().unwrap().len(), 4);
+    }
+
+    /// A config written by the release that hooked only the first four
+    /// events, plus a `PermissionRequest` hook of the user's own.
+    fn four_event_install(kind: AgentKind) -> Map<String, Value> {
+        let mut doc = installed(kind, None);
+        let hooks = doc["hooks"].as_object_mut().unwrap();
+        hooks.shift_remove("Notification");
+        hooks.insert(
+            "PermissionRequest".to_owned(),
+            json!([{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "approve.sh" }] }]),
+        );
+        doc
+    }
+
+    // Codex keys trust by position: upgrading must leave every existing entry
+    // where it was and only append the new ones.
+    #[rstest]
+    #[case(AgentKind::Claude)]
+    #[case(AgentKind::Codex)]
+    fn a_four_event_install_is_outdated_and_upgrades_by_appending(#[case] kind: AgentKind) {
+        let spec = Spec::of(kind);
+        let old = four_event_install(kind);
+        assert_eq!(state(spec, &old, cmd), HookState::Outdated);
+
+        let mut doc = old.clone();
+        install(spec, &mut doc, cmd).unwrap();
+        assert_eq!(state(spec, &doc, cmd), HookState::Installed);
+        let (old_hooks, new_hooks) = (
+            old["hooks"].as_object().unwrap(),
+            doc["hooks"].as_object().unwrap(),
+        );
+        // Existing events keep their order and their entries.
+        assert!(new_hooks.keys().zip(old_hooks.keys()).all(|(a, b)| a == b));
+        for (name, entries) in old_hooks {
+            let now = new_hooks[name].as_array().unwrap();
+            assert_eq!(
+                &now[..entries.as_array().unwrap().len()],
+                entries.as_array().unwrap().as_slice(),
+                "{name}"
+            );
+        }
+        assert_eq!(new_hooks["PermissionRequest"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            new_hooks["PermissionRequest"][1],
+            json!({ "hooks": [{ "type": "command", "command": cmd(HookEventKind::AwaitingInput) }] })
+        );
+        let added = own_changes(spec, &old, &doc);
+        assert!(added.iter().all(|line| line.starts_with('+')), "{added:?}");
+        assert!(added.contains(&format!(
+            "+hooks.PermissionRequest: {}",
+            cmd(HookEventKind::AwaitingInput)
+        )));
+    }
+
+    #[rstest]
+    #[case(AgentKind::Claude)]
+    #[case(AgentKind::Codex)]
+    #[case(AgentKind::Cursor)]
+    fn remove_takes_out_every_entry(#[case] kind: AgentKind) {
+        let spec = Spec::of(kind);
+        let mut doc = installed(kind, None);
+        remove(spec, &mut doc).unwrap();
+        assert_eq!(state(spec, &doc, cmd), HookState::Missing);
+        assert!(!render(&doc).contains("agent-pinball"), "{}", render(&doc));
+
+        // Control: the user's own PermissionRequest hook stays.
+        let mut doc = four_event_install(AgentKind::Claude);
+        install(Spec::of(AgentKind::Claude), &mut doc, cmd).unwrap();
+        remove(Spec::of(AgentKind::Claude), &mut doc).unwrap();
+        assert_eq!(
+            doc["hooks"],
+            json!({ "PermissionRequest": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "approve.sh" }] }] })
         );
     }
 
