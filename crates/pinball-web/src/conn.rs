@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use axum::Router;
 use hyper::server::conn::http1;
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpListener;
@@ -102,6 +102,10 @@ where
     http1::Builder::new()
         // One request per connection: the deadline above covers its only head.
         .keep_alive(false)
+        // hyper holds the same limits in case it ever reads past `head_end`.
+        .timer(TokioTimer::new())
+        .header_read_timeout(until.saturating_duration_since(Instant::now()))
+        .max_header_size(MAX_HEAD_BYTES)
         .title_case_headers(true)
         .serve_connection(TokioIo::new(conn), TowerToHyperService::new(app))
         .await
@@ -129,10 +133,16 @@ async fn read_head(stream: &mut (impl AsyncRead + Unpin)) -> io::Result<Option<V
 }
 
 /// Length of the head including its blank line, accepting bare `\n` endings.
+///
+/// Blank lines before the request line are skipped, as hyper's parser skips
+/// them. Otherwise a client could end this read with a bare `\r\n\r\n` and
+/// send the real head to hyper outside the cap and the deadline.
 fn head_end(buf: &[u8]) -> Option<usize> {
-    let crlf = buf.windows(3).position(|w| w == b"\n\r\n").map(|i| i + 3);
-    let lf = buf.windows(2).position(|w| w == b"\n\n").map(|i| i + 2);
-    crlf.into_iter().chain(lf).min()
+    let start = buf.iter().position(|b| !matches!(b, b'\r' | b'\n'))?;
+    let rest = buf.get(start..)?;
+    let crlf = rest.windows(3).position(|w| w == b"\n\r\n").map(|i| i + 3);
+    let lf = rest.windows(2).position(|w| w == b"\n\n").map(|i| i + 2);
+    crlf.into_iter().chain(lf).min().map(|end| start + end)
 }
 
 async fn refuse_oversized<S>(mut conn: Conn<S>, until: Instant) -> io::Result<()>
@@ -265,6 +275,14 @@ mod tests {
         assert_eq!(head_end(b"GET / HTTP/1.1\r\nHost: a\r\n\r\nrest"), Some(27));
         assert_eq!(head_end(b"GET / HTTP/1.1\nHost: a\n\nrest"), Some(24));
         assert_eq!(head_end(b"GET / HTTP/1.1\r\nHost: a\r\n"), None);
+    }
+
+    // Adversarial: leading blank lines must not end the head early.
+    #[test]
+    fn leading_blank_lines_are_not_the_end_of_the_head() {
+        assert_eq!(head_end(b"\r\n\r\n\n"), None);
+        assert_eq!(head_end(b"\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\n"), None);
+        assert_eq!(head_end(b"\r\n\nGET / HTTP/1.1\nHost: a\n\n"), Some(27));
     }
 
     #[tokio::test]

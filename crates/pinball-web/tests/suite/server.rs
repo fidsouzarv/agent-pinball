@@ -236,6 +236,11 @@ fn head_one_byte_over_the_cap_gets_431() {
     raw.extend_from_slice(b"\r\n\r\n");
     let response = send(addr, &raw);
     assert!(response.starts_with("HTTP/1.1 431 "), "{response}");
+    // hyper's own 431 would lack the security headers.
+    assert!(
+        response.contains("x-content-type-options: nosniff"),
+        "{response}"
+    );
 }
 
 // Adversarial: a head that never ends is refused once it passes the cap, not
@@ -262,6 +267,22 @@ fn endless_head_is_refused_at_the_cap() {
     );
 }
 
+// Adversarial: blank lines before the request line are skipped by hyper's
+// parser, so they must not let the rest of the head past the cap.
+#[test]
+fn leading_blank_lines_do_not_bypass_the_cap() {
+    let addr = start();
+    let mut raw = b"\r\n\r\nGET /healthz HTTP/1.1\r\nHost: localhost\r\nX-Pad: ".to_vec();
+    raw.extend(std::iter::repeat_n(b'a', 16 * 1024));
+    raw.extend_from_slice(b"\r\n\r\n");
+    let response = send(addr, &raw);
+    assert!(response.starts_with("HTTP/1.1 431 "), "{response}");
+    assert!(
+        response.contains("x-content-type-options: nosniff"),
+        "{response}"
+    );
+}
+
 // The cap is on the head, so a head just under it is still served.
 #[test]
 fn head_at_the_cap_is_served() {
@@ -278,6 +299,17 @@ fn head_at_the_cap_is_served() {
 // client is served meanwhile.
 #[test]
 fn trickling_client_is_cut_at_the_connection_deadline() {
+    assert_trickle_is_cut(b"");
+}
+
+// Adversarial: the same, after blank lines that could end a naive head read
+// and leave the trickle to hyper.
+#[test]
+fn trickle_after_blank_lines_is_cut_at_the_connection_deadline() {
+    assert_trickle_is_cut(b"\r\n\r\n");
+}
+
+fn assert_trickle_is_cut(opening: &[u8]) {
     let limits = Limits {
         deadline: Duration::from_millis(300),
         ..FAST
@@ -286,6 +318,7 @@ fn trickling_client_is_cut_at_the_connection_deadline() {
 
     let mut slow = TcpStream::connect(addr).expect("connect slow client");
     let mut reader = slow.try_clone().expect("clone slow client");
+    slow.write_all(opening).expect("write opening");
     thread::spawn(move || {
         for byte in b"GET /healthz HTTP/1.1\r\nX-Slow: ".iter().cycle().take(60) {
             if slow.write_all(&[*byte]).is_err() {
