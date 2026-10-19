@@ -355,13 +355,17 @@ fn connections_over_the_cap_wait_for_a_free_slot() {
         ..FAST
     };
     let addr = start_with(Site::new(vec!["localhost".to_owned()]), limits);
+    // The idle client's deadline starts when the server accepts it, which is
+    // after this point, so the probe cannot be served earlier than a deadline
+    // from here, however slowly the runner schedules either side.
+    let started = Instant::now();
     let idle = TcpStream::connect(addr).expect("connect idle client");
+    // Lets the server take the idle client first.
     thread::sleep(Duration::from_millis(50));
 
-    let started = Instant::now();
     assert!(probe_health(addr).unwrap());
     assert!(
-        started.elapsed() >= Duration::from_millis(250),
+        started.elapsed() >= limits.deadline,
         "probe served beside the idle client after {:?}",
         started.elapsed()
     );
