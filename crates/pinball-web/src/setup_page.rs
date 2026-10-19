@@ -28,15 +28,21 @@ const PINBALL_CSS: &str = include_str!("../assets/pinball.css");
 const SETUP_CSS: &str = include_str!("../assets/setup.css");
 const SETUP_JS: &str = include_str!("../assets/setup.js");
 
-pub(crate) fn asset(path: &str) -> Option<Response> {
-    let (content_type, body) = match path {
-        "/assets/pinball.css" => ("text/css; charset=utf-8", PINBALL_CSS),
-        "/assets/setup.css" => ("text/css; charset=utf-8", SETUP_CSS),
-        "/assets/setup.js" => ("text/javascript; charset=utf-8", SETUP_JS),
-        _ => return None,
-    };
-    Some(Response::ok(content_type, body))
-}
+/// Embedded assets as (path, content type, body). Each is its own route, so an
+/// unknown asset is a 404 whatever the method.
+pub(crate) const ASSETS: [(&str, &str, &str); 3] = [
+    (
+        "/assets/pinball.css",
+        "text/css; charset=utf-8",
+        PINBALL_CSS,
+    ),
+    ("/assets/setup.css", "text/css; charset=utf-8", SETUP_CSS),
+    (
+        "/assets/setup.js",
+        "text/javascript; charset=utf-8",
+        SETUP_JS,
+    ),
+];
 
 pub(crate) fn html(page: &SetupPage) -> Response {
     Response::ok(
@@ -454,13 +460,8 @@ mod tests {
         let body = html(&page(vec![])).body;
         assert!(!body.contains("style=\""));
         assert!(!body.contains("<script>"), "no inline script under the CSP");
-        for asset in [
-            "/assets/pinball.css",
-            "/assets/setup.css",
-            "/assets/setup.js",
-        ] {
+        for (asset, _, _) in ASSETS {
             assert!(body.contains(asset), "{asset}");
-            assert!(super::asset(asset).is_some());
         }
     }
 

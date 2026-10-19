@@ -1,16 +1,18 @@
 //! `agent-pinball` binary: parse arguments, load config once, call the library.
 
 use std::io::{self, IsTerminal};
-use std::net::{SocketAddr, TcpListener};
+use std::net::SocketAddr;
 use std::path::Path;
 use std::process::ExitCode;
-use std::thread::{self, JoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pinball_cli::{Command, Config, SetupArgs, Terminal, converse, parse_args, setup_env, usage};
 use pinball_core::{AgentKind, HookEventKind};
 use pinball_setup::{SetupEnv, agent_prompt, report, spool};
 use pinball_web::{BindPosture, SetupPage, Site};
+use tokio::net::TcpListener;
+use tokio::runtime::Runtime;
+use tokio::task::JoinHandle;
 
 fn main() -> ExitCode {
     let command = match parse_args(std::env::args()) {
@@ -78,8 +80,15 @@ fn status(bind: SocketAddr) -> Result<(), String> {
     }
 }
 
+fn runtime() -> Result<Runtime, String> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("cannot start the server runtime: {err}"))
+}
+
 /// Binds after the fail-closed loopback check.
-fn listen(bind: SocketAddr, config: &Config) -> Result<TcpListener, String> {
+fn listen(bind: SocketAddr, config: &Config, runtime: &Runtime) -> Result<TcpListener, String> {
     let posture =
         pinball_web::check_bind(bind, config.in_container).map_err(|err| err.to_string())?;
     if posture == BindPosture::ContainerNamespace {
@@ -89,14 +98,19 @@ fn listen(bind: SocketAddr, config: &Config) -> Result<TcpListener, String> {
             port = bind.port()
         );
     }
-    TcpListener::bind(bind).map_err(|err| format!("cannot bind {bind}: {err}"))
+    runtime
+        .block_on(TcpListener::bind(bind))
+        .map_err(|err| format!("cannot bind {bind}: {err}"))
 }
 
 fn serve(bind: SocketAddr, config: &Config) -> Result<(), String> {
-    let listener = listen(bind, config)?;
+    let runtime = runtime()?;
+    let listener = listen(bind, config, &runtime)?;
     eprintln!("agent-pinball: serving on http://{bind}");
     let site = Site::new(config.allowed_hosts.clone());
-    pinball_web::serve(&listener, &site).map_err(|err| err.to_string())
+    runtime
+        .block_on(pinball_web::serve(listener, site))
+        .map_err(|err| err.to_string())
 }
 
 fn setup(args: &SetupArgs, config: &Config) -> Result<(), String> {
@@ -110,7 +124,9 @@ fn setup(args: &SetupArgs, config: &Config) -> Result<(), String> {
     }
     let page = if args.web {
         let bind = args.bind.unwrap_or(config.bind);
-        Some((bind, setup_page(bind, config, env.clone())?))
+        let runtime = runtime()?;
+        let server = setup_page(bind, config, env.clone(), &runtime)?;
+        Some((bind, runtime, server))
     } else {
         None
     };
@@ -121,7 +137,7 @@ fn setup(args: &SetupArgs, config: &Config) -> Result<(), String> {
         output: io::stdout(),
     };
     let result = converse(args, &env, &mut term, now_ms());
-    let Some((bind, server)) = page else {
+    let Some((bind, runtime, server)) = page else {
         return result;
     };
     // The page outlives the terminal step: without a terminal, setup can be
@@ -130,17 +146,19 @@ fn setup(args: &SetupArgs, config: &Config) -> Result<(), String> {
         eprintln!("agent-pinball: {message}");
     }
     eprintln!("agent-pinball: setup page stays at http://{bind}/setup; Ctrl-C to quit");
-    let _ = server.join();
+    let _ = runtime.block_on(server);
     Ok(())
 }
 
-/// Serves the setup page on its own thread while the terminal asks.
+/// Serves the setup page on the runtime's workers while the terminal asks on
+/// this thread.
 fn setup_page(
     bind: SocketAddr,
     config: &Config,
     env: SetupEnv,
+    runtime: &Runtime,
 ) -> Result<JoinHandle<io::Result<()>>, String> {
-    let listener = listen(bind, config)?;
+    let listener = listen(bind, config, runtime)?;
     let site = Site {
         allowed_hosts: config.allowed_hosts.clone(),
         setup: Some(Box::new(move || {
@@ -152,5 +170,5 @@ fn setup_page(
         })),
     };
     eprintln!("agent-pinball: setup page on http://{bind}/setup");
-    Ok(thread::spawn(move || pinball_web::serve(&listener, &site)))
+    Ok(runtime.spawn(pinball_web::serve(listener, site)))
 }

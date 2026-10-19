@@ -16,4 +16,14 @@ disallowed-methods = [
     { path = "std::fs::remove_file", reason = "the panel is read-only" },
     { path = "std::fs::remove_dir", reason = "the panel is read-only" },
     { path = "std::fs::remove_dir_all", reason = "the panel is read-only" },
+    # The async runtime has its own copies of the same calls. Its `fs` and
+    # `process` features are off, so the paths do not resolve today;
+    # `allow-invalid` keeps them banned the moment a feature turns them on.
+    { path = "tokio::process::Command::new", reason = "the panel is read-only: it never spawns or controls agents", allow-invalid = true },
+    { path = "tokio::fs::write", reason = "the panel is read-only", allow-invalid = true },
+    { path = "tokio::fs::rename", reason = "the panel is read-only", allow-invalid = true },
+    { path = "tokio::fs::copy", reason = "the panel is read-only", allow-invalid = true },
+    { path = "tokio::fs::remove_file", reason = "the panel is read-only", allow-invalid = true },
+    { path = "tokio::fs::remove_dir", reason = "the panel is read-only", allow-invalid = true },
+    { path = "tokio::fs::remove_dir_all", reason = "the panel is read-only", allow-invalid = true },
 ]
